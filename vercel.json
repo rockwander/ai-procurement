@@ -1,13 +1,5 @@
 {
-  "buildCommand": "cd rfq-system && npm install --legacy-peer-deps && npm run build",
-  "devCommand": "cd rfq-system && npm run dev",
-  "installCommand": "cd rfq-system && npm install --legacy-peer-deps",
-  "outputDirectory": "rfq-system/.next",
-  "framework": "nextjs",
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/rfq-system/$1"
-    }
-  ]
+  "buildCommand": "npm run build",
+  "installCommand": "npm install --legacy-peer-deps",
+  "framework": "nextjs"
 }
