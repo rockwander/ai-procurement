@@ -57,8 +57,8 @@ tmp/
 
 # Old architecture files (not using these)
 /packages/
-package.json
-package-lock.json
+/package-lock.json
+rfq-system/package-lock.json
 ARCHITECTURE.md
 NEXT_STEPS.md
 PROJECT_SUMMARY.md
