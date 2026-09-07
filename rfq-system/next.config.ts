@@ -20,6 +20,10 @@ const nextConfig: NextConfig = {
       './node_modules/pdfkit/js/standard-fonts/**/*',
       './node_modules/pdfkit/js/data/**/*',
     ],
+    '/api/sample-docs/[slug]': [
+      './node_modules/pdfkit/js/standard-fonts/**/*',
+      './node_modules/pdfkit/js/data/**/*',
+    ],
   },
 };
 
