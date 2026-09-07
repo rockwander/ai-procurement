@@ -1,5 +1,4 @@
 {
-  "buildCommand": "bash build.sh",
-  "installCommand": "echo 'Using custom build script'",
-  "outputDirectory": "rfq-system/.next"
+  "buildCommand": "npm run build",
+  "installCommand": "npm install --legacy-peer-deps"
 }
