@@ -10,7 +10,7 @@ import * as path from 'path';
 const isProduction = process.env.NODE_ENV === 'production';
 const databaseUrl = process.env.DATABASE_URL;
 
-let db: ReturnType<typeof drizzleSQLite> | ReturnType<typeof drizzlePostgres>;
+let db: any; // Use 'any' to avoid type conflicts between SQLite and Postgres
 
 if (isProduction && databaseUrl?.startsWith('postgres')) {
   // Use Vercel Postgres in production

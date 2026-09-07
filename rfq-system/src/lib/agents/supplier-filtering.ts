@@ -99,7 +99,7 @@ export class SupplierFilteringAgent extends BaseAgent {
 
     // Filter out suppliers with excluded flags
     if (input.excludeFlags && input.excludeFlags.length > 0) {
-      return results.filter((supplier) => {
+      return results.filter((supplier: any) => {
         const flags = (supplier.flags as string[]) || [];
         return !input.excludeFlags!.some((flag) => flags.includes(flag));
       });
