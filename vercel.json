@@ -1,7 +1,5 @@
 {
-  "framework": null,
-  "buildCommand": "cd rfq-system && npm install --legacy-peer-deps && npm run build",
-  "devCommand": "cd rfq-system && npm run dev",
-  "installCommand": "echo 'Skipping root install'",
+  "buildCommand": "cd rfq-system && npm run build",
+  "installCommand": "cd rfq-system && npm install --legacy-peer-deps",
   "outputDirectory": "rfq-system/.next"
 }
