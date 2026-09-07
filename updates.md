@@ -40,7 +40,7 @@ Entry format:
 
 **Affects:** MASTER_SPEC §2 step 1 (Create RFQ); Drafting Agent; Form
 Generation Agent.
-**Status:** in spec
+**Status:** implemented (commits 2e0aae0, 39aa23e)
 
 **Design decisions (product owner, same day):**
 - Form-builder edits apply immediately (no AI call); chat "update" is the
