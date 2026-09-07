@@ -1,150 +1,157 @@
-import { sql } from 'drizzle-orm';
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import {
+  pgTable,
+  text,
+  integer,
+  doublePrecision,
+  boolean,
+  timestamp,
+  jsonb,
+} from 'drizzle-orm/pg-core';
 
 // Users table - both procurement and suppliers
-export const users = sqliteTable('users', {
+export const users = pgTable('users', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   name: text('name').notNull(),
   role: text('role', { enum: ['procurement', 'supplier'] }).notNull(),
   companyName: text('company_name'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
 // Policy Documents
-export const policyDocuments = sqliteTable('policy_documents', {
+export const policyDocuments = pgTable('policy_documents', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   title: text('title').notNull(),
   content: text('content').notNull(),
   category: text('category', { enum: ['general', 'item_specific'] }).notNull(),
   version: integer('version').notNull().default(1),
-  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  isActive: boolean('is_active').notNull().default(true),
   filePath: text('file_path'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
 // RFQs
-export const rfqs = sqliteTable('rfqs', {
+export const rfqs = pgTable('rfqs', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   title: text('title').notNull(),
   description: text('description').notNull(),
   createdBy: text('created_by').notNull().references(() => users.id),
-  policyReferences: text('policy_references', { mode: 'json' }),  // array of policy IDs
+  policyReferences: jsonb('policy_references'),  // array of policy IDs
   status: text('status', { enum: ['draft', 'sent', 'evaluating', 'awarded', 'cancelled'] }).notNull().default('draft'),
-  deadline: integer('deadline', { mode: 'timestamp' }),
-  formSchema: text('form_schema', { mode: 'json' }).notNull(),  // form builder schema
+  deadline: timestamp('deadline'),
+  formSchema: jsonb('form_schema').notNull(),  // form builder schema
   generatedContent: text('generated_content'),  // AI-generated RFQ content
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
 // RFQ Line Items
-export const rfqLineItems = sqliteTable('rfq_line_items', {
+export const rfqLineItems = pgTable('rfq_line_items', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   rfqId: text('rfq_id').notNull().references(() => rfqs.id, { onDelete: 'cascade' }),
   itemDescription: text('item_description').notNull(),
-  quantity: real('quantity').notNull(),
+  quantity: doublePrecision('quantity').notNull(),
   unit: text('unit').notNull(),
-  specifications: text('specifications', { mode: 'json' }),
+  specifications: jsonb('specifications'),
   orderIndex: integer('order_index').notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
 // Suppliers
-export const suppliers = sqliteTable('suppliers', {
+export const suppliers = pgTable('suppliers', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId: text('user_id').references(() => users.id),  // link to user account if registered
   companyName: text('company_name').notNull(),
   contactEmail: text('contact_email').notNull(),
   contactPhone: text('contact_phone'),
-  categories: text('categories', { mode: 'json' }).notNull(),  // array of strings
-  rating: real('rating').default(0),
+  categories: jsonb('categories').notNull(),  // array of strings
+  rating: doublePrecision('rating').default(0),
   performanceSummary: text('performance_summary'),  // AI-generated
   pastOrdersCount: integer('past_orders_count').default(0),
-  flags: text('flags', { mode: 'json' }),  // array of warning flags
-  reviews: text('reviews', { mode: 'json' }),  // array of review objects
-  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
-  metadata: text('metadata', { mode: 'json' }),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  flags: jsonb('flags'),  // array of warning flags
+  reviews: jsonb('reviews'),  // array of review objects
+  isActive: boolean('is_active').notNull().default(true),
+  metadata: jsonb('metadata'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
 // RFQ Invitations
-export const rfqInvitations = sqliteTable('rfq_invitations', {
+export const rfqInvitations = pgTable('rfq_invitations', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   rfqId: text('rfq_id').notNull().references(() => rfqs.id, { onDelete: 'cascade' }),
   supplierId: text('supplier_id').notNull().references(() => suppliers.id),
   status: text('status', { enum: ['sent', 'viewed', 'submitted', 'declined'] }).notNull().default('sent'),
-  sentAt: integer('sent_at', { mode: 'timestamp' }),
-  viewedAt: integer('viewed_at', { mode: 'timestamp' }),
-  submittedAt: integer('submitted_at', { mode: 'timestamp' }),
+  sentAt: timestamp('sent_at'),
+  viewedAt: timestamp('viewed_at'),
+  submittedAt: timestamp('submitted_at'),
   remindersSent: integer('reminders_sent').default(0),
-  lastReminderAt: integer('last_reminder_at', { mode: 'timestamp' }),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  lastReminderAt: timestamp('last_reminder_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
 // Quote Submissions
-export const quoteSubmissions = sqliteTable('quote_submissions', {
+export const quoteSubmissions = pgTable('quote_submissions', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   rfqInvitationId: text('rfq_invitation_id').notNull().references(() => rfqInvitations.id, { onDelete: 'cascade' }),
-  formData: text('form_data', { mode: 'json' }).notNull(),  // complete form submission
-  lineItems: text('line_items', { mode: 'json' }).notNull(),  // pricing per line item
-  totalAmount: real('total_amount').notNull(),
+  formData: jsonb('form_data').notNull(),  // complete form submission
+  lineItems: jsonb('line_items').notNull(),  // pricing per line item
+  totalAmount: doublePrecision('total_amount').notNull(),
   currency: text('currency').notNull().default('USD'),
-  attachments: text('attachments', { mode: 'json' }),  // array of file URLs
+  attachments: jsonb('attachments'),  // array of file URLs
   notes: text('notes'),
-  aiExtractedData: text('ai_extracted_data', { mode: 'json' }),  // data extracted from supplier docs
-  submittedAt: integer('submitted_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  aiExtractedData: jsonb('ai_extracted_data'),  // data extracted from supplier docs
+  submittedAt: timestamp('submitted_at').notNull().defaultNow(),
 });
 
 // Purchase Orders
-export const purchaseOrders = sqliteTable('purchase_orders', {
+export const purchaseOrders = pgTable('purchase_orders', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   rfqId: text('rfq_id').notNull().references(() => rfqs.id),
   poNumber: text('po_number').notNull().unique(),
-  awards: text('awards', { mode: 'json' }).notNull(),  // [{supplierId, lineItems[], total}]
+  awards: jsonb('awards').notNull(),  // [{supplierId, lineItems[], total}]
   strategyUsed: text('strategy_used').notNull(),  // natural language strategy
   strategyReasoning: text('strategy_reasoning'),  // AI explanation
   status: text('status', { enum: ['draft', 'sent', 'accepted', 'rejected'] }).notNull().default('draft'),
-  totalValue: real('total_value').notNull(),
+  totalValue: doublePrecision('total_value').notNull(),
   currency: text('currency').notNull().default('USD'),
   createdBy: text('created_by').notNull().references(() => users.id),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
 // AI Execution Logs
-export const aiLogs = sqliteTable('ai_logs', {
+export const aiLogs = pgTable('ai_logs', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   agentType: text('agent_type', {
     enum: ['drafting', 'form_generation', 'supplier_filtering', 'autofill', 'evaluation']
   }).notNull(),
   rfqId: text('rfq_id').references(() => rfqs.id),
-  inputData: text('input_data', { mode: 'json' }),
-  outputData: text('output_data', { mode: 'json' }),
+  inputData: jsonb('input_data'),
+  outputData: jsonb('output_data'),
   modelUsed: text('model_used').notNull(),
   tokensUsed: integer('tokens_used'),
-  costUsd: real('cost_usd'),
+  costUsd: doublePrecision('cost_usd'),
   durationMs: integer('duration_ms'),
-  success: integer('success', { mode: 'boolean' }).notNull(),
+  success: boolean('success').notNull(),
   errorMessage: text('error_message'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
 // Chat Messages (for supplier AI chat)
-export const chatMessages = sqliteTable('chat_messages', {
+export const chatMessages = pgTable('chat_messages', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   rfqInvitationId: text('rfq_invitation_id').notNull().references(() => rfqInvitations.id, { onDelete: 'cascade' }),
   role: text('role', { enum: ['user', 'assistant'] }).notNull(),
   content: text('content').notNull(),
-  attachments: text('attachments', { mode: 'json' }),  // files uploaded in this message
-  extractedData: text('extracted_data', { mode: 'json' }),  // data extracted from attachments
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  attachments: jsonb('attachments'),  // files uploaded in this message
+  extractedData: jsonb('extracted_data'),  // data extracted from attachments
+  createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
 // Email Logs (for tracking email delivery)
-export const emailLogs = sqliteTable('email_logs', {
+export const emailLogs = pgTable('email_logs', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   recipientEmail: text('recipient_email').notNull(),
   subject: text('subject').notNull(),
@@ -155,7 +162,7 @@ export const emailLogs = sqliteTable('email_logs', {
   status: text('status', { enum: ['sent', 'delivered', 'failed', 'bounced'] }).notNull(),
   externalId: text('external_id'),  // Resend email ID
   errorMessage: text('error_message'),
-  sentAt: integer('sent_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  sentAt: timestamp('sent_at').notNull().defaultNow(),
 });
 
 // Types for TypeScript

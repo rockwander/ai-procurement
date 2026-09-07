@@ -1,7 +1,7 @@
 import { BaseAgent, AgentResponse } from './base';
 import { db } from '@/db';
 import { suppliers } from '@/db/schema';
-import { sql, or, like } from 'drizzle-orm';
+import { and, eq, gte } from 'drizzle-orm';
 
 export interface SupplierFilterInput {
   categories: string[];
@@ -72,30 +72,30 @@ export class SupplierFilteringAgent extends BaseAgent {
   }
 
   private async sqlFilter(input: SupplierFilterInput): Promise<any[]> {
-    // Build category filters
-    const categoryFilters = input.categories.map((cat) =>
-      sql`json_array_length(json_extract(${suppliers.categories}, '$')) > 0 AND EXISTS (
-        SELECT 1 FROM json_each(${suppliers.categories})
-        WHERE json_each.value LIKE ${'%' + cat + '%'}
-      )`
-    );
+    // Deterministic filters that map cleanly to SQL columns.
+    const conditions = [eq(suppliers.isActive, true)];
+    if (input.minRating) {
+      conditions.push(gte(suppliers.rating, input.minRating));
+    }
 
-    let query = db
+    let results = await db
       .select()
       .from(suppliers)
-      .where(sql`${suppliers.isActive} = 1`);
+      .where(and(...conditions));
 
-    // Apply category filter if provided
-    if (categoryFilters.length > 0) {
-      query = query.where(or(...categoryFilters));
+    // Category matching against the jsonb array. The supplier set is small,
+    // so a case-insensitive substring match in JS is simpler and portable.
+    if (input.categories.length > 0) {
+      const needles = input.categories.map((c) => c.toLowerCase());
+      results = results.filter((supplier: any) => {
+        const cats = ((supplier.categories as string[]) || []).map((c) =>
+          c.toLowerCase()
+        );
+        return needles.some((needle) =>
+          cats.some((cat) => cat.includes(needle) || needle.includes(cat))
+        );
+      });
     }
-
-    // Apply rating filter
-    if (input.minRating) {
-      query = query.where(sql`${suppliers.rating} >= ${input.minRating}`);
-    }
-
-    const results = await query;
 
     // Filter out suppliers with excluded flags
     if (input.excludeFlags && input.excludeFlags.length > 0) {
