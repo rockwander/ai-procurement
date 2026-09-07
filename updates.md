@@ -21,6 +21,19 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-08 — Find & invite suppliers: show all first, filter/select inline
+**Refinement:** Under "Find & invite suppliers", list **all suppliers
+immediately**. The buyer can apply the existing filters (category, min
+rating, exclude flagged, plus text search) — all client-side now — or just
+multi-select from the full list and trigger the send. The AI pre-filtering
+agent becomes **optional** ("Rank by fit with AI"): it ranks and annotates
+the same list rather than gating it behind a required category + agent run.
+Adds a select-all for the current filter.
+
+**Affects:** MASTER_SPEC §2 step 2 (Find & invite suppliers); Pre-Filtering
+Agent (now optional).
+**Status:** implemented
+
 ## 2026-09-07 — Form builder must define the form, not fill it
 **Refinement:** The create-RFQ "Form builder" view is for the buyer to
 **define the metadata and layout of the supplier response form** — which

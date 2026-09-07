@@ -92,12 +92,16 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
    server-side on upload (PDF via `pdf-parse`, DOCX via `mammoth`); only the
    extracted text is kept in the thread — the binary is not stored.
 
-2. **Supplier pre-filtering**
-   - **Pre-Filtering Agent** pulls suppliers by category, ranks by fit,
-     summarises rating / flags / past performance into a match score + blurb.
+2. **Find & invite suppliers**
+   - The screen **lists every active supplier up front**. The buyer can
+     filter client-side (category, min rating, exclude flagged, text search),
+     **multi-select directly**, and send — no agent run required.
+   - **Pre-Filtering Agent** is optional: "Rank by fit with AI" ranks and
+     annotates the same list (match score + blurb from rating / flags / past
+     performance); it reorders, it does not gate selection.
 
 3. **Select suppliers & send**
-   - Buyer multi-selects suppliers.
+   - Buyer multi-selects suppliers (with a select-all for the current filter).
    - System creates tokenized invitations, renders the RFQ PDF, and emails
      each supplier a summary + PDF + unique form link.
    - Per non-responding supplier: manual "send reminder".
@@ -162,6 +166,18 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
+
+### 2026-09-08 — Find & invite suppliers: show all first, filter/select inline
+
+**Refinement:** Under "Find & invite suppliers", show **all suppliers in a
+list immediately**. The buyer applies the existing filters (category, min
+rating, exclude flagged) — now client-side — or just multi-selects from the
+full list and triggers the send. Running the AI pre-filtering agent is
+**optional** ("Rank by fit with AI") and only ranks/annotates the same list;
+it no longer gates the list behind a required category + agent run.
+
+**Affects:** Core Workflow step 2 (Find & invite suppliers); Pre-Filtering
+Agent (now optional).
 
 ### 2026-09-07 — Form builder must define the form, not fill it
 
