@@ -21,4 +21,23 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
-_No refinements logged yet._
+## 2026-09-07 — Conversational RFQ creation with synced PDF + form builder
+**Refinement:** Creating an RFQ becomes a chat-driven refinement loop:
+- Buyer attaches **multiple documents** (business requirements, policy, etc.)
+  and/or **pastes content as text**, and keeps refining across chat turns.
+- The RFQ is (re)generated **only when the buyer explicitly says "update"** —
+  the agent then considers the **whole thread so far** and updates the RFQ.
+  Conversation can continue and "update" can be repeated.
+- The RFQ has **two synced parts**: a **PDF document** and a **single-column
+  form builder** for the same content. View **defaults to the PDF**; buyer
+  can switch to the form builder; every "update" regenerates **both**
+  simultaneously.
+- RFQ document structure: header (Buyer, RFQ ID, quote deadline, expected
+  delivery, currency, validity) → 1) Line items table → 2) Commercial
+  information requested per line item → 3) Quality questionnaire +
+  supporting-document upload → 4) Terms & conditions. Worked example:
+  `rfq-system/MASTER_SPEC.md` Appendix A.
+
+**Affects:** MASTER_SPEC §2 step 1 (Create RFQ); Drafting Agent; Form
+Generation Agent.
+**Status:** in spec
