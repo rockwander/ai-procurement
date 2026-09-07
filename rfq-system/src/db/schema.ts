@@ -82,6 +82,8 @@ export const rfqInvitations = pgTable('rfq_invitations', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   rfqId: text('rfq_id').notNull().references(() => rfqs.id, { onDelete: 'cascade' }),
   supplierId: text('supplier_id').notNull().references(() => suppliers.id),
+  // Unguessable token for the supplier's public form link (no login required)
+  token: text('token').notNull().$defaultFn(() => crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')).unique(),
   status: text('status', { enum: ['sent', 'viewed', 'submitted', 'declined'] }).notNull().default('sent'),
   sentAt: timestamp('sent_at'),
   viewedAt: timestamp('viewed_at'),

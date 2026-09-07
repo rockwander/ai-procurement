@@ -169,22 +169,22 @@ Important:
 
     message += `## Strategy:\n${input.strategy}\n\n`;
 
-    message += `## RFQ Line Items:\n`;
+    message += `## RFQ Line Items (use these exact itemId values in your output):\n`;
     input.rfqLineItems.forEach((item, i) => {
-      message += `${i + 1}. ${item.itemDescription} - Quantity: ${item.quantity}\n`;
+      message += `${i + 1}. itemId="${item.id}" | ${item.itemDescription} | Quantity: ${item.quantity}\n`;
     });
     message += `\n`;
 
     message += `## Supplier Quotes:\n\n`;
     input.quotes.forEach((quote, i) => {
-      message += `### Quote ${i + 1}: ${quote.supplierName}\n`;
+      message += `### Quote ${i + 1}: ${quote.supplierName} (supplierId="${quote.supplierId}")\n`;
       message += `Total: $${quote.totalAmount.toFixed(2)}\n`;
       if (quote.deliveryDays) {
         message += `Delivery: ${quote.deliveryDays} days\n`;
       }
       message += `Line Items:\n`;
       quote.lineItems.forEach((item) => {
-        message += `  - ${item.itemDescription}: ${item.quantity} × $${item.unitPrice.toFixed(2)} = $${item.totalPrice.toFixed(2)}\n`;
+        message += `  - itemId="${item.itemId}" | ${item.itemDescription}: ${item.quantity} × $${item.unitPrice.toFixed(2)} = $${item.totalPrice.toFixed(2)}\n`;
       });
       if (quote.notes) {
         message += `Notes: ${quote.notes}\n`;
@@ -192,37 +192,54 @@ Important:
       message += `\n`;
     });
 
-    message += `\nApply the strategy and return the award decisions as JSON.`;
+    message += `\nApply the strategy and return the award decisions as JSON. `;
+    message += `Every RFQ line item (by its exact itemId) must appear in exactly one award. `;
+    message += `Use the exact supplierId and itemId strings given above.`;
 
     return message;
   }
 
   private validateAwards(output: QuoteEvaluationOutput, input: QuoteEvaluationInput): void {
-    // Check that all RFQ line items are awarded
-    const awardedItemIds = new Set<string>();
-    output.awards.forEach((award) => {
-      award.lineItems.forEach((item) => {
-        awardedItemIds.add(item.itemId);
-      });
-    });
+    const validIds = new Set(input.rfqLineItems.map((li) => li.id));
+    const byDescription = new Map(
+      input.rfqLineItems.map((li) => [li.itemDescription.trim().toLowerCase(), li.id])
+    );
 
-    const requiredItemIds = new Set(input.rfqLineItems.map((item) => item.id));
-
-    for (const itemId of requiredItemIds) {
-      if (!awardedItemIds.has(itemId)) {
-        throw new Error(`Line item ${itemId} was not awarded to any supplier`);
+    // Repair itemIds the model may have paraphrased: fall back to a description
+    // match before giving up.
+    for (const award of output.awards) {
+      for (const item of award.lineItems) {
+        if (!validIds.has(item.itemId)) {
+          const repaired = byDescription.get(
+            String(item.itemDescription || '').trim().toLowerCase()
+          );
+          if (repaired) item.itemId = repaired;
+        }
       }
     }
 
-    // Recalculate total cost to verify
-    const calculatedTotal = output.awards.reduce(
-      (sum, award) => sum + award.totalAmount,
-      0
+    const awardedItemIds = new Set<string>();
+    output.awards.forEach((award) =>
+      award.lineItems.forEach((item) => awardedItemIds.add(item.itemId))
     );
 
+    const missing = input.rfqLineItems.filter((li) => !awardedItemIds.has(li.id));
+    if (missing.length > 0) {
+      throw new Error(
+        `The strategy left ${missing.length} line item(s) unawarded: ` +
+          missing.map((li) => li.itemDescription).join(', ') +
+          '. Try rephrasing the strategy.'
+      );
+    }
+
+    // Recalculate totals from line items to guarantee consistency.
+    for (const award of output.awards) {
+      const sum = award.lineItems.reduce((s, li) => s + (li.totalPrice || 0), 0);
+      if (Math.abs(sum - award.totalAmount) > 0.01) award.totalAmount = sum;
+    }
+    const calculatedTotal = output.awards.reduce((s, a) => s + a.totalAmount, 0);
     if (Math.abs(calculatedTotal - output.totalCost) > 0.01) {
-      console.warn(`Total cost mismatch: ${calculatedTotal} vs ${output.totalCost}`);
-      output.totalCost = calculatedTotal; // Fix it
+      output.totalCost = calculatedTotal;
     }
   }
 }

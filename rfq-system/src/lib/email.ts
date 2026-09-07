@@ -2,8 +2,22 @@ import { Resend } from 'resend';
 import { db } from '@/db';
 import { emailLogs } from '@/db/schema';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM_EMAIL = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+
+// Lazy: don't construct the Resend client at module load — it throws when
+// RESEND_API_KEY is absent, which breaks `next build` page-data collection.
+let _resend: Resend | null = null;
+function getResend(): Resend {
+  if (!_resend) {
+    _resend = new Resend(process.env.RESEND_API_KEY || 're_missing_key');
+  }
+  return _resend;
+}
+const resend = new Proxy({} as Resend, {
+  get(_t, prop, receiver) {
+    return Reflect.get(getResend() as object, prop, receiver);
+  },
+});
 
 export interface SendRFQEmailParams {
   to: string;

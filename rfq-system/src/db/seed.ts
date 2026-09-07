@@ -151,11 +151,101 @@ Ensure fair, transparent, and competitive procurement processes.
         ],
         isActive: true,
       },
+      {
+        companyName: 'Apex Electronics Wholesale',
+        contactEmail: 'rfq@apexelectronics.com',
+        contactPhone: '+1-555-0106',
+        categories: ['IT Equipment', 'Electronics', 'Networking'],
+        rating: 4.1,
+        performanceSummary: 'Strong inventory depth on networking and peripherals. Competitive on bulk orders, average lead times.',
+        pastOrdersCount: 19,
+        flags: [],
+        reviews: [
+          { date: '2024-06-11', rating: 4, comment: 'Fair prices, delivery as promised' },
+          { date: '2024-01-30', rating: 4, comment: 'Responsive sales team' },
+        ],
+        isActive: true,
+      },
+      {
+        companyName: 'Meridian Furniture Group',
+        contactEmail: 'sales@meridianfurniture.com',
+        contactPhone: '+1-555-0107',
+        categories: ['Furniture', 'Office Supplies', 'Interior Fit-out'],
+        rating: 4.4,
+        performanceSummary: 'Premium office furniture with strong warranty and installation services. Higher price point but low defect rate.',
+        pastOrdersCount: 27,
+        flags: [],
+        reviews: [
+          { date: '2024-05-19', rating: 5, comment: 'Excellent build quality and installation' },
+          { date: '2024-03-02', rating: 4, comment: 'Slightly expensive but worth it' },
+        ],
+        isActive: true,
+      },
+      {
+        companyName: 'RapidParts Manufacturing',
+        contactEmail: 'quotes@rapidparts.com',
+        contactPhone: '+1-555-0108',
+        categories: ['Industrial Equipment', 'Manufacturing', 'Tools', 'Fasteners'],
+        rating: 4.0,
+        performanceSummary: 'Fast turnaround on custom industrial parts. Good technical support, occasionally tight on capacity during peak periods.',
+        pastOrdersCount: 14,
+        flags: [],
+        reviews: [
+          { date: '2024-04-28', rating: 4, comment: 'Quick quotes and delivery' },
+          { date: '2023-11-20', rating: 4, comment: 'Reliable for repeat orders' },
+        ],
+        isActive: true,
+      },
+      {
+        companyName: 'CloudNine Software Solutions',
+        contactEmail: 'procurement@cloudnine.io',
+        contactPhone: '+1-555-0109',
+        categories: ['Software', 'Cloud Services', 'IT Services'],
+        rating: 4.6,
+        performanceSummary: 'Enterprise software licensing specialist with excellent compliance documentation and audit support.',
+        pastOrdersCount: 18,
+        flags: [],
+        reviews: [
+          { date: '2024-06-01', rating: 5, comment: 'Seamless licensing process' },
+          { date: '2024-02-14', rating: 4, comment: 'Good renewal terms' },
+        ],
+        isActive: true,
+      },
+      {
+        companyName: 'ValueStationery LLC',
+        contactEmail: 'orders@valuestationery.com',
+        contactPhone: '+1-555-0110',
+        categories: ['Stationery', 'Office Supplies', 'Printing'],
+        rating: 3.9,
+        performanceSummary: 'Dependable mid-market stationery supplier. Consistent quality on core products, limited range for specialty items.',
+        pastOrdersCount: 21,
+        flags: [],
+        reviews: [
+          { date: '2024-05-06', rating: 4, comment: 'Consistent and on time' },
+          { date: '2024-01-18', rating: 4, comment: 'Good value for standard supplies' },
+        ],
+        isActive: true,
+      },
+      {
+        companyName: 'Titan Industrial Supply',
+        contactEmail: 'rfq@titanindustrial.com',
+        contactPhone: '+1-555-0111',
+        categories: ['Industrial Equipment', 'Safety Equipment', 'Tools'],
+        rating: 3.6,
+        performanceSummary: 'Broad industrial catalog including safety gear. Pricing competitive but customer service response times can lag.',
+        pastOrdersCount: 9,
+        flags: ['slow_response'],
+        reviews: [
+          { date: '2024-03-25', rating: 3, comment: 'Good prices, slow to respond to queries' },
+          { date: '2024-02-08', rating: 4, comment: 'Products as described' },
+        ],
+        isActive: true,
+      },
     ];
 
     await db.insert(suppliers).values(suppliersData);
 
-    console.log('✅ Created 5 sample suppliers');
+    console.log(`✅ Created ${suppliersData.length} sample suppliers`);
 
     console.log('\n🎉 Database seeded successfully!\n');
     console.log('📝 Login credentials:');

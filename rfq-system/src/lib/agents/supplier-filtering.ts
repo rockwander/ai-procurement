@@ -22,8 +22,8 @@ export interface RankedSupplier {
 }
 
 export class SupplierFilteringAgent extends BaseAgent {
-  // Use Haiku for cost efficiency on simple tasks
-  protected model = 'claude-3-haiku-20240307';
+  // Flash-lite: cheapest/fastest tier for the ranking-and-summary step
+  protected model = process.env.GEMINI_MODEL_LITE || 'gemini-flash-lite-latest';
 
   async filterAndRankSuppliers(
     input: SupplierFilterInput,
@@ -128,8 +128,10 @@ Return JSON array:
 ]`;
 
     const userMessage = `Rank these suppliers for categories: ${input.categories.join(', ')}\n\n` +
+      `Return one object per supplier, echoing back the exact supplierId given.\n\n` +
       `Suppliers:\n` +
       suppliers.map((s, i) => `${i + 1}. ${s.companyName}
+- supplierId: ${s.id}
 - Categories: ${(s.categories as string[]).join(', ')}
 - Rating: ${s.rating}/5
 - Past Orders: ${s.pastOrdersCount}
@@ -147,9 +149,16 @@ Return JSON array:
       summary: string;
     }>>(text);
 
-    // Merge AI rankings with supplier data
-    const ranked: RankedSupplier[] = suppliers.map((supplier) => {
-      const ranking = rankings.find((r) => r.supplierId === supplier.id);
+    // Merge AI rankings with supplier data. Prefer an id match; fall back to
+    // positional order (the model is asked to return one object per supplier
+    // in the same order).
+    const ranked: RankedSupplier[] = suppliers.map((supplier, index) => {
+      const ranking =
+        rankings.find((r) => r.supplierId === supplier.id) ??
+        rankings.find(
+          (r) => (r as any).companyName === supplier.companyName
+        ) ??
+        rankings[index];
 
       return {
         id: supplier.id,

@@ -28,9 +28,11 @@ export interface AgentLogData {
 
 // Base agent class
 export class BaseAgent {
-  protected model = 'gemini-2.5-flash';
+  protected model = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 
-  // Call Gemini API with structured logging
+  // Call Gemini API with structured logging + retry on transient errors
+  // (429 rate limit, 503 overload). Falls back to a secondary model on the
+  // last attempt so a demo doesn't hard-fail on a capacity spike.
   protected async callGemini(
     prompt: string,
     options?: {
@@ -39,37 +41,44 @@ export class BaseAgent {
     }
   ): Promise<{ text: string; tokensUsed: number }> {
     const startTime = Date.now();
+    const maxAttempts = 4;
+    const fallbackModel = process.env.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash';
 
-    try {
-      const model = genAI.getGenerativeModel({
-        model: this.model,
-        systemInstruction: options?.systemInstruction,
-        generationConfig: {
-          temperature: options?.temperature ?? 1.0,
-        },
-      });
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const modelName =
+        attempt === maxAttempts && this.model !== fallbackModel
+          ? fallbackModel
+          : this.model;
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          systemInstruction: options?.systemInstruction,
+          generationConfig: {
+            temperature: options?.temperature ?? 1.0,
+          },
+        });
 
-      const result = await model.generateContent(prompt);
-      const response = result.response;
-      const text = response.text();
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
 
-      const durationMs = Date.now() - startTime;
-
-      // Gemini doesn't return token counts in the same way
-      // Estimate: ~4 chars per token
-      const estimatedTokens = Math.ceil((prompt.length + text.length) / 4);
-
-      console.log(`✅ Gemini API call succeeded in ${durationMs}ms`);
-
-      return {
-        text,
-        tokensUsed: estimatedTokens,
-      };
-    } catch (error) {
-      const durationMs = Date.now() - startTime;
-      console.error(`❌ Gemini API call failed in ${durationMs}ms:`, error);
-      throw error;
+        const estimatedTokens = Math.ceil((prompt.length + text.length) / 4);
+        console.log(
+          `✅ Gemini (${modelName}) succeeded in ${Date.now() - startTime}ms (attempt ${attempt})`
+        );
+        return { text, tokensUsed: estimatedTokens };
+      } catch (error) {
+        lastError = error;
+        const msg = error instanceof Error ? error.message : String(error);
+        const transient = /\b(429|503|500|overloaded|high demand|rate limit)\b/i.test(msg);
+        console.error(
+          `❌ Gemini (${modelName}) failed attempt ${attempt}/${maxAttempts}: ${msg}`
+        );
+        if (!transient || attempt === maxAttempts) break;
+        await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+      }
     }
+    throw lastError;
   }
 
   // Calculate cost based on token usage (Gemini 2.5 Flash pricing)
