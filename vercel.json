@@ -1,5 +1,0 @@
-{
-  "buildCommand": "cd rfq-system && npm run build",
-  "installCommand": "cd rfq-system && npm install --legacy-peer-deps",
-  "outputDirectory": "rfq-system/.next"
-}

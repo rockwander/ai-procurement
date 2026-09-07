@@ -70,3 +70,5 @@ SETUP_SERVICES_FINAL.md
 TECHNICAL_ANALYSIS_AND_QUESTIONS.md
 
 # Only track rfq-system/ directory
+.vercel
+.env*
