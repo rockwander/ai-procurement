@@ -1,5 +1,4 @@
 import type { NextConfig } from "next";
-import path from 'path';
 
 const nextConfig: NextConfig = {
   experimental: {
@@ -7,17 +6,11 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '10mb',
     },
   },
-  webpack: (config, { isServer }) => {
+  webpack: (config) => {
     // Handle better-sqlite3 native module
     config.externals.push({
       'better-sqlite3': 'commonjs better-sqlite3',
     });
-
-    // Ensure @ alias resolves correctly
-    config.resolve.alias = {
-      ...config.resolve.alias,
-      '@': path.resolve(__dirname, './src'),
-    };
 
     return config;
   },
