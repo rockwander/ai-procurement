@@ -77,30 +77,42 @@ export default function RFQDetailPage() {
 
   return (
     <AppShell>
-      <div className="flex items-start justify-between mb-1">
+      <div className="flex items-start justify-between mb-3">
         <h1 className="text-2xl font-bold text-gray-900">{rfq.title}</h1>
         <StatusBadge status={rfq.status} />
       </div>
-      <p className="text-gray-600 text-sm mb-4 max-w-3xl">{rfq.description}</p>
 
-      <div className="flex gap-3 mb-6 text-sm">
-        <a
-          href={`/api/rfqs/${id}/pdf`}
-          target="_blank"
-          rel="noreferrer"
-          className="text-blue-600 hover:underline"
-        >
-          View RFQ PDF
-        </a>
-        {submittedCount > 0 && (
+      {rfq.hasContent && (
+        <Card className="p-0 mb-6 overflow-hidden">
+          <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between">
+            <span className="text-sm font-semibold text-gray-900">RFQ document</span>
+            <a
+              href={`/api/rfqs/${id}/pdf`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-blue-600 hover:underline"
+            >
+              open in new tab
+            </a>
+          </div>
+          <iframe
+            src={`/api/rfqs/${id}/pdf`}
+            className="w-full h-[70vh] border-0"
+            title="RFQ PDF"
+          />
+        </Card>
+      )}
+
+      {submittedCount > 0 && (
+        <div className="mb-6 text-sm">
           <Link
             href={`/dashboard/rfqs/${id}/quotes`}
             className="text-blue-600 hover:underline"
           >
             Compare {submittedCount} quote{submittedCount > 1 ? 's' : ''} →
           </Link>
-        )}
-      </div>
+        </div>
+      )}
 
       {error && <div className="mb-4"><ErrorText>{error}</ErrorText></div>}
 
