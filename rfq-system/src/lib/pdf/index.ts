@@ -5,8 +5,11 @@ import { POPDFDocument, type POPDFData } from './po-pdf';
 import { SampleRFQDocument } from './sample-rfq-pdf';
 import { SampleRequisitionDocument } from './sample-requisition-pdf';
 import { SamplePolicyDocument } from './sample-policy-pdf';
+import { SupplierQuoteDocument } from './sample-supplier-quote-pdf';
+import { SupplierFaqDocument } from './sample-supplier-faq-pdf';
 import type { SampleRFQ } from '@/lib/sample-rfqs';
 import type { SampleRequisition, SamplePolicy } from '@/lib/sample-docs';
+import type { SupplierSubmission } from '@/lib/sample-supplier-docs';
 
 // Generate RFQ PDF as Buffer from the structured RFQ document.
 export async function generateRFQPDF(data: RFQPDFProps): Promise<Buffer> {
@@ -33,6 +36,14 @@ export async function generateSampleRequisitionPDF(data: SampleRequisition): Pro
 
 export async function generateSamplePolicyPDF(data: SamplePolicy): Promise<Buffer> {
   return renderToBuffer(createElement(SamplePolicyDocument, { data } as any) as any);
+}
+
+export async function generateSupplierQuotePDF(data: SupplierSubmission): Promise<Buffer> {
+  return renderToBuffer(createElement(SupplierQuoteDocument, { data } as any) as any);
+}
+
+export async function generateSupplierFaqPDF(data: SupplierSubmission): Promise<Buffer> {
+  return renderToBuffer(createElement(SupplierFaqDocument, { data } as any) as any);
 }
 
 export type { RFQPDFProps, POPDFData };
