@@ -41,3 +41,12 @@ Entry format:
 **Affects:** MASTER_SPEC §2 step 1 (Create RFQ); Drafting Agent; Form
 Generation Agent.
 **Status:** in spec
+
+**Design decisions (product owner, same day):**
+- Form-builder edits apply immediately (no AI call); chat "update" is the
+  only trigger that re-runs the Drafting Agent over the thread.
+- Uploads: .txt/.md/.csv/.pdf/.docx, parsed to text server-side (pdf-parse,
+  mammoth); binary not stored.
+- Draft RFQ + full chat thread + versioned RFQ snapshots are persisted.
+  This is a POC (≤20 RFQs); storage is not a design constraint, old RFQs
+  will be deleted if limits are hit.

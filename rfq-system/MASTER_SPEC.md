@@ -62,8 +62,28 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
 
    See **Appendix A** for a full worked example of the RFQ document.
 
-   - Form builder (single column): rename / add / delete / reorder fields,
-     toggle mandatory — operating on the same RFQ the PDF renders.
+   - **Form builder (single column)** operates on the same RFQ the PDF
+     renders. It exposes every section as editable groups:
+     - **Line items** — add / delete / reorder rows; edit item,
+       specification, qty, unit.
+     - **Commercial information requested** — the per-line-item fields
+       vendors must fill; add / delete / reorder / rename, toggle mandatory.
+     - **Quality questionnaire** — add / delete / reorder / edit questions,
+       set response type (Yes-No / free text / file), toggle mandatory.
+     - **Header** and **Terms & conditions** — editable text.
+   - **Direct edits in the form builder apply immediately** to the RFQ and
+     re-render the PDF — no AI call. The chat **"update"** is only for AI
+     regeneration from the thread. Both paths keep the two views in sync.
+
+   **Persistence.** A draft RFQ row is created as soon as the buyer starts
+   the chat. The full chat thread (messages + attached-document text +
+   pasted content) is stored against it, and each **"update"** stores a new
+   RFQ snapshot (history kept). Nothing is sent to suppliers until step 3.
+
+   **Document handling.** The chat accepts pasted text and file uploads of
+   **.txt / .md / .csv / .pdf / .docx**. Uploaded files are parsed to text
+   server-side on upload (PDF via `pdf-parse`, DOCX via `mammoth`); only the
+   extracted text is kept in the thread — the binary is not stored.
 
 2. **Supplier pre-filtering**
    - **Pre-Filtering Agent** pulls suppliers by category, ranks by fit,
@@ -154,6 +174,14 @@ recorded in `/updates.md`.
 
 **Affects:** Core Workflow step 1 (Create RFQ); Drafting Agent; Form
 Generation Agent; adds Appendix A.
+
+**Design decisions (2026-09-07, product owner):**
+- Form-builder edits apply **immediately** (no AI call); chat "update" is
+  the only AI-regeneration trigger.
+- Uploads accept **.txt/.md/.csv/.pdf/.docx**; parsed to text server-side,
+  binary not stored.
+- Draft RFQ + full chat thread + versioned RFQ snapshots are **persisted**
+  (POC scale — ≤20 RFQs; storage is not a constraint).
 
 **Status:** in spec
 
