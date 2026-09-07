@@ -1,0 +1,5 @@
+{
+  "buildCommand": "bash build.sh",
+  "installCommand": "echo 'Using custom build script'",
+  "outputDirectory": "rfq-system/.next"
+}
