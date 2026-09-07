@@ -4,11 +4,14 @@ import { chatMessages } from '@/db/schema';
 import { eq, asc } from 'drizzle-orm';
 import { badRequest, notFound, serverError } from '@/lib/api';
 import { loadQuoteContext } from '@/lib/quote-access';
-import { AutofillAgent } from '@/lib/agents/autofill';
+import { AutofillAgent, type AutofillLineItem } from '@/lib/agents/autofill';
+import { coerceExtraction } from '@/lib/form-coerce';
+import type { FormSchema } from '@/lib/form-schema';
 
-// Public: AI chat sidebar for the supplier form.
-// Send a message (+ optional pasted document text) and get a reply plus
-// suggested field updates the client can apply to the form.
+// Public: AI assistant for the supplier quote form.
+// Accepts a message and/or the text of any documents the supplier provides,
+// extracts what fits the fixed form, coerces each value to what the control
+// accepts, and returns form-ready updates plus anything that needs manual entry.
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
@@ -43,10 +46,11 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { message, documentTexts, currentFormData } = body as {
+    const { message, documentTexts, currentFormData, currentLinePrices } = body as {
       message?: string;
       documentTexts?: string[];
       currentFormData?: Record<string, unknown>;
+      currentLinePrices?: Record<string, number>;
     };
 
     if (!message && (!documentTexts || documentTexts.length === 0)) {
@@ -65,75 +69,127 @@ export async function POST(
     }));
 
     const agent = new AutofillAgent();
-    const formSchema = ctx.rfq.formSchema;
+    const formSchema = (ctx.rfq.formSchema ?? { sections: [], fields: [] }) as FormSchema;
+    const lineItems: AutofillLineItem[] = ctx.lineItems.map((li) => ({
+      id: li.id,
+      itemDescription: li.itemDescription,
+      quantity: li.quantity,
+      unit: li.unit,
+    }));
+    const lineItemIds = new Set(lineItems.map((l) => l.id));
 
     let assistantMessage = '';
-    let suggestedUpdates: Record<string, unknown> = {};
-    let confidence: Record<string, string> = {};
+    const rawExtraction: Record<string, string | number> = {};
+    const confidence: Record<string, string> = {};
+    const hasDocs = !!(documentTexts && documentTexts.length > 0);
 
-    // If documents were provided, run structured extraction against the schema.
-    if (documentTexts && documentTexts.length > 0) {
+    if (hasDocs) {
       const extract = await agent.extractFormData({
         documentTexts,
         formSchema,
+        lineItems,
         conversationHistory,
       });
       if (extract.success && extract.data) {
-        suggestedUpdates = { ...suggestedUpdates, ...extract.data.extractedData };
-        confidence = { ...confidence, ...extract.data.confidence };
-        const found = Object.keys(extract.data.extractedData).length;
-        assistantMessage =
-          `I read ${documentTexts.length} document(s) and pulled ${found} field(s) into the form. ` +
-          (extract.data.suggestions?.length ? extract.data.suggestions.join(' ') + ' ' : '') +
-          (extract.data.missingFields?.length
-            ? `Still need: ${extract.data.missingFields.join(', ')}.`
-            : '');
+        Object.assign(rawExtraction, extract.data.extractedData);
+        Object.assign(confidence, extract.data.confidence);
       } else {
-        assistantMessage = `I couldn't extract data from the documents: ${extract.error}. `;
+        assistantMessage = `I couldn't read those documents: ${extract.error}. `;
       }
     }
 
-    // Always run the conversational turn if there's a message.
-    if (message) {
+    // Only run the conversational turn when the message carries substance of its
+    // own. If documents are the payload and the message is just a cover note
+    // ("here is our quote, please fill the form"), the extraction path handles it
+    // and a chat reply would only add a canned "please paste your details" line.
+    const coverNoteOnly =
+      hasDocs &&
+      (!message ||
+        /\b(here('?s| is)|attached|please (fill|complete|extract|use)|our (quote|quotation|response|submission))\b/i.test(
+          message
+        ));
+
+    if (message && !coverNoteOnly) {
       const chat = await agent.chatResponse(message, {
         formSchema,
+        lineItems,
         currentFormData: currentFormData ?? {},
+        currentLinePrices: currentLinePrices ?? {},
         conversationHistory,
       });
       if (chat.success && chat.data) {
         assistantMessage = (assistantMessage ? assistantMessage + '\n\n' : '') + chat.data.message;
         if (chat.data.suggestedUpdates) {
-          suggestedUpdates = { ...suggestedUpdates, ...chat.data.suggestedUpdates };
+          Object.assign(rawExtraction, chat.data.suggestedUpdates);
         }
       } else if (!assistantMessage) {
         assistantMessage = `Sorry, I hit an error: ${chat.error}`;
       }
     }
 
-    // Persist the exchange.
-    const userContent =
-      (message ?? '') +
-      (documentTexts && documentTexts.length
-        ? `\n\n[Uploaded ${documentTexts.length} document(s)]`
-        : '');
+    // Coerce everything the agent produced into form-ready values.
+    const coerced = coerceExtraction(rawExtraction, formSchema, lineItemIds);
+
+    // Build a helpful assistant summary if the doc path produced the message.
+    if (hasDocs) {
+      const fieldCount = Object.keys(coerced.fields).length;
+      const priceCount = Object.keys(coerced.lineItemPrices).length;
+      const parts: string[] = [];
+      parts.push(
+        `From ${documentTexts.length} document(s): filled ${fieldCount} field(s)` +
+          (priceCount ? ` and ${priceCount} line-item price(s)` : '') + '.'
+      );
+      if (coerced.unresolved.length) {
+        parts.push(
+          `Couldn't auto-fill (please key these in): ` +
+            coerced.unresolved.map((u) => u.label).join('; ') + '.'
+        );
+      }
+      const noteFields = Object.keys(coerced.notes).filter(
+        (id) => !coerced.unresolved.some((u) => u.fieldId === id)
+      );
+      if (noteFields.length) {
+        const labelOf = new Map(formSchema.fields.map((f) => [f.id, f.label]));
+        parts.push(
+          `Shortened to fit the form (full text kept for your review): ` +
+            noteFields.map((id) => labelOf.get(id) ?? id).join('; ') + '.'
+        );
+      }
+      const missingPrices = lineItems.filter((l) => !coerced.lineItemPrices[l.id]).length;
+      if (missingPrices) {
+        parts.push(`${missingPrices} line item(s) still need a unit price.`);
+      }
+      assistantMessage = (assistantMessage ? assistantMessage + '\n\n' : '') + parts.join(' ');
+    }
+
     await db.insert(chatMessages).values([
       {
         rfqInvitationId: ctx.invitation.id,
         role: 'user',
-        content: userContent.trim(),
+        content:
+          (message ?? '') +
+          (documentTexts && documentTexts.length ? `\n\n[Provided ${documentTexts.length} document(s)]` : ''),
         attachments: documentTexts?.map((_, i) => `document-${i + 1}`) ?? [],
       },
       {
         rfqInvitationId: ctx.invitation.id,
         role: 'assistant',
-        content: assistantMessage,
-        extractedData: suggestedUpdates,
+        content: assistantMessage.trim(),
+        extractedData: {
+          fields: coerced.fields,
+          lineItemPrices: coerced.lineItemPrices,
+          notes: coerced.notes,
+        },
       },
     ]);
 
     return NextResponse.json({
-      message: assistantMessage,
-      suggestedUpdates,
+      message: assistantMessage.trim(),
+      // form-ready
+      fields: coerced.fields,
+      lineItemPrices: coerced.lineItemPrices,
+      notes: coerced.notes,
+      unresolved: coerced.unresolved,
       confidence,
     });
   } catch (error) {

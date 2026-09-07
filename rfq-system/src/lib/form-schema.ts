@@ -79,8 +79,12 @@ export function rfqDocumentToFormSchema(doc: RFQDocument): FormSchema {
   let order = 0;
 
   for (const cf of doc.commercialFields) {
-    // Unit price is handled by the pricing table, not as a free field.
-    if (/^unit\s*price$/i.test(cf.label.trim())) continue;
+    // Unit price is captured per line in the pricing table, not as a single
+    // free field. Drop any commercial field that is essentially "unit price"
+    // (with or without qualifiers like "(ex-taxes)", ", INR", "/unit").
+    if (/^unit[\s-]*price\b/i.test(cf.label.trim()) || /\bprice per unit\b/i.test(cf.label)) {
+      continue;
+    }
     fields.push({
       id: cf.id,
       type: cf.type === 'number' ? 'number' : cf.type === 'select' ? 'select' : 'text',

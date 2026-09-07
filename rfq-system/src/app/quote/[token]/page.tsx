@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { QuoteForm, QuoteFormValue, LineItemInput } from '@/components/QuoteForm';
-import { QuoteChat } from '@/components/QuoteChat';
+import { QuoteChat, ChatApplyPayload } from '@/components/QuoteChat';
 import { Button, ErrorText } from '@/components/ui';
 import { api } from '@/lib/fetcher';
 import { FormSchema, emptySchema, sortedFields } from '@/lib/form-schema';
@@ -30,6 +30,9 @@ export default function SupplierQuotePage() {
     lineItemPrices: {},
     notes: '',
   });
+  // fieldId -> the assistant's fuller answer, when it had to be shortened to
+  // fit the control. Shown as a hint under the field.
+  const [aiNotes, setAiNotes] = useState<Record<string, string>>({});
 
   useEffect(() => {
     api<QuoteData>(`/api/quote/${token}`)
@@ -157,6 +160,7 @@ export default function SupplierQuotePage() {
               value={value}
               onChange={setValue}
               disabled={!!locked}
+              aiNotes={aiNotes}
             />
 
             {!locked && (
@@ -185,26 +189,15 @@ export default function SupplierQuotePage() {
           <QuoteChat
             token={token}
             currentFormData={value.formData}
+            currentLinePrices={value.lineItemPrices}
             disabled={!!locked}
-            onApply={(updates) => {
-              // Map AI updates into either form fields or line-item prices.
-              setValue((prev) => {
-                const next = { ...prev, formData: { ...prev.formData } };
-                const prices = { ...prev.lineItemPrices };
-                for (const [k, v] of Object.entries(updates)) {
-                  const li = data.lineItems.find(
-                    (x) =>
-                      x.id === k ||
-                      k.toLowerCase().includes(x.itemDescription.toLowerCase().slice(0, 8))
-                  );
-                  if (li && !Number.isNaN(Number(v))) {
-                    prices[li.id] = Number(v);
-                  } else {
-                    next.formData[k] = v;
-                  }
-                }
-                return { ...next, lineItemPrices: prices };
-              });
+            onApply={(payload: ChatApplyPayload) => {
+              setValue((prev) => ({
+                ...prev,
+                formData: { ...prev.formData, ...payload.fields },
+                lineItemPrices: { ...prev.lineItemPrices, ...payload.lineItemPrices },
+              }));
+              setAiNotes((prev) => ({ ...prev, ...payload.notes }));
             }}
           />
         </div>

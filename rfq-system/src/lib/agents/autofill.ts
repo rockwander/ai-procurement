@@ -1,17 +1,30 @@
 import { BaseAgent, AgentResponse } from './base';
+import type { FormSchema, FormField } from '@/lib/form-schema';
+
+export interface AutofillLineItem {
+  id: string;
+  itemDescription: string;
+  quantity: number;
+  unit: string;
+}
 
 export interface AutofillInput {
-  documentTexts: string[]; // Extracted text from uploaded documents
-  formSchema: any; // The form structure
+  documentTexts: string[]; // Extracted text from any documents / pasted content the supplier provided
+  formSchema: FormSchema;
+  lineItems: AutofillLineItem[];
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
 export interface AutofillOutput {
-  extractedData: Record<string, any>;
+  // targetId -> raw extracted answer. targetId is a form field id OR
+  // "lineitem:<rfqLineItemId>" for a per-line unit price.
+  extractedData: Record<string, string | number>;
   confidence: Record<string, 'high' | 'medium' | 'low'>;
   suggestions: string[];
   missingFields: string[];
 }
+
+const DOC_CHAR_CAP = 20_000;
 
 export class AutofillAgent extends BaseAgent {
   async extractFormData(
@@ -26,17 +39,22 @@ export class AutofillAgent extends BaseAgent {
 
       const { text, tokensUsed } = await this.callGemini(userMessage, {
         systemInstruction: systemPrompt,
-        temperature: 0.5,
+        temperature: 0.3,
       });
 
       const durationMs = Date.now() - startTime;
       const data = this.parseJsonResponse<AutofillOutput>(text);
+      data.extractedData = data.extractedData ?? {};
+      data.confidence = data.confidence ?? {};
+      data.suggestions = data.suggestions ?? [];
+      data.missingFields = data.missingFields ?? [];
 
       const costUsd = this.calculateCost(tokensUsed);
 
       await this.logExecution({
         agentType: 'autofill',
-        inputData: { documentCount: input.documentTexts.length },
+        rfqId: rfqInvitationId,
+        inputData: { documentCount: input.documentTexts.length, lineItems: input.lineItems.length },
         outputData: { fieldsExtracted: Object.keys(data.extractedData).length },
         modelUsed: this.model,
         tokensUsed,
@@ -45,15 +63,11 @@ export class AutofillAgent extends BaseAgent {
         success: true,
       });
 
-      console.log(`✅ Autofill completed (${Object.keys(data.extractedData).length} fields, $${costUsd.toFixed(4)})`);
+      console.log(
+        `✅ Autofill completed (${Object.keys(data.extractedData).length} targets, $${costUsd.toFixed(4)})`
+      );
 
-      return {
-        success: true,
-        data,
-        tokensUsed,
-        costUsd,
-        durationMs,
-      };
+      return { success: true, data, tokensUsed, costUsd, durationMs };
     } catch (error) {
       const durationMs = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -67,29 +81,25 @@ export class AutofillAgent extends BaseAgent {
       });
 
       console.error('❌ Autofill failed:', error);
-
-      return {
-        success: false,
-        error: errorMessage,
-        durationMs,
-      };
+      return { success: false, error: errorMessage, durationMs };
     }
   }
 
   async chatResponse(
     userMessage: string,
     context: {
-      formSchema: any;
-      currentFormData: Record<string, any>;
+      formSchema: FormSchema;
+      lineItems: AutofillLineItem[];
+      currentFormData: Record<string, unknown>;
+      currentLinePrices?: Record<string, number>;
       conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
     }
-  ): Promise<AgentResponse<{ message: string; suggestedUpdates?: Record<string, any> }>> {
+  ): Promise<AgentResponse<{ message: string; suggestedUpdates?: Record<string, string | number> }>> {
     const startTime = Date.now();
 
     try {
       const systemPrompt = this.buildChatSystemPrompt(context);
 
-      // Build conversation history as part of the prompt
       let conversationPrompt = '';
       if (context.conversationHistory.length > 0) {
         conversationPrompt = 'Previous conversation:\n';
@@ -102,17 +112,16 @@ export class AutofillAgent extends BaseAgent {
 
       const { text, tokensUsed } = await this.callGemini(conversationPrompt, {
         systemInstruction: systemPrompt,
-        temperature: 0.7,
+        temperature: 0.6,
       });
 
-      // Try to extract JSON suggestions if present
-      let suggestedUpdates: Record<string, any> | undefined;
+      let suggestedUpdates: Record<string, string | number> | undefined;
       const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
       if (jsonMatch) {
         try {
           suggestedUpdates = JSON.parse(jsonMatch[1]);
         } catch {
-          // Ignore JSON parse errors in chat
+          /* ignore */
         }
       }
 
@@ -130,7 +139,6 @@ export class AutofillAgent extends BaseAgent {
       };
     } catch (error) {
       console.error('❌ Chat response failed:', error);
-
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -139,88 +147,134 @@ export class AutofillAgent extends BaseAgent {
     }
   }
 
+  // -------------------------------------------------------------------------
+
   private buildSystemPrompt(): string {
-    return `You are an AI assistant helping suppliers fill out RFQ quote forms by extracting data from their documents.
+    return `You extract data from a supplier's own documents (quotations, price lists, spec
+sheets, certificates, company profiles - in any layout) and map it onto a FIXED
+quote form. You cannot change the form. Your job is to decide what in the
+documents answers each form target, and return a value that fits that target's
+type.
 
-Your task:
-1. Read the provided documents (company profiles, price lists, certifications, etc.)
-2. Extract relevant information that matches the form fields
-3. Assign confidence levels to extracted data
-4. Identify missing required information
-
-Output Format (JSON):
+Return ONLY a JSON object:
 {
-  "extractedData": {
-    "fieldId": "extracted value",
-    "companyName": "Acme Corp",
-    "unitPrice_item1": 99.99
-  },
-  "confidence": {
-    "fieldId": "high|medium|low"
-  },
-  "suggestions": [
-    "Found pricing for 5 out of 8 items",
-    "Company certification document included"
-  ],
-  "missingFields": ["delivery_date", "warranty_terms"]
+  "extractedData": { "<targetId>": <value>, ... },
+  "confidence":    { "<targetId>": "high" | "medium" | "low", ... },
+  "suggestions":   [ "short notes for the supplier", ... ],
+  "missingFields": [ "<label of a target you found no data for>", ... ]
 }
 
-Guidelines:
-- Extract exact values when found
-- Don't guess or make up data
-- Use "high" confidence only when explicitly stated
-- Use "medium" when inferred from context
-- Use "low" when uncertain
-- List all required fields that couldn't be filled`;
+Target ids:
+- Form fields are given with their id, label, type and (for dropdowns) allowed
+  options.
+- Each RFQ line item is a target with id "lineitem:<id>" - the value is that
+  item's unit price as a plain number.
+
+Rules for values, by field type:
+- number: return a plain number only (no currency, no units, no commas, no
+  ranges). "INR 5,000" -> 5000. "90 days" -> 90. "8-12%" -> 10 (midpoint).
+- select: return EXACTLY one of the allowed options. For a Yes/No question,
+  return "Yes" or "No" based on the document, even if the document gives a long
+  explanation - put the explanation in "suggestions" instead.
+- text / textarea: return the relevant snippet, trimmed.
+- date: return ISO yyyy-mm-dd if you can.
+- lineitem:*: plain number (unit price). If a document gives pricing per item,
+  fill every line you can.
+
+General:
+- Only include a target in extractedData if the documents actually support a
+  value. Do not guess. If unsure, lower the confidence or leave it out and add
+  the label to missingFields.
+- "TBD", "to be confirmed", "not stated" in a document = no value; leave it out
+  and list it in missingFields.
+- Prefer explicit numbers/statements over inference.`;
   }
 
   private buildUserMessage(input: AutofillInput): string {
-    let message = `Extract data from these supplier documents to fill the quote form:\n\n`;
-
-    message += `## Form Fields to Fill:\n`;
-    if (input.formSchema.fields) {
-      input.formSchema.fields.forEach((field: any) => {
-        const required = field.required ? ' (required)' : '';
-        message += `- ${field.id}: ${field.label}${required}\n`;
-      });
+    let m = `## Quote form targets\n\n### Form fields\n`;
+    for (const f of input.formSchema.fields ?? []) {
+      m += this.describeField(f);
     }
-    message += `\n`;
 
-    message += `## Supplier Documents:\n\n`;
+    m += `\n### Line item unit prices (target id in brackets)\n`;
+    if (input.lineItems.length === 0) {
+      m += `(none)\n`;
+    } else {
+      for (const li of input.lineItems) {
+        m += `- [lineitem:${li.id}] ${li.itemDescription} - ask qty ${li.quantity} ${li.unit}\n`;
+      }
+    }
+
+    m += `\n## Supplier documents / provided content\n\n`;
     input.documentTexts.forEach((text, i) => {
-      message += `### Document ${i + 1}:\n${text.substring(0, 3000)}\n\n`;
+      const clipped = text.length > DOC_CHAR_CAP ? text.slice(0, DOC_CHAR_CAP) + '\n…[truncated]' : text;
+      m += `### Document ${i + 1}\n${clipped}\n\n`;
     });
 
     if (input.conversationHistory && input.conversationHistory.length > 0) {
-      message += `\n## Previous Conversation:\n`;
-      input.conversationHistory.slice(-4).forEach((msg) => {
-        message += `${msg.role}: ${msg.content}\n`;
+      m += `\n## Conversation so far\n`;
+      input.conversationHistory.slice(-6).forEach((msg) => {
+        m += `${msg.role}: ${msg.content}\n`;
       });
     }
 
-    message += `\nExtract and return data as JSON.`;
-
-    return message;
+    m += `\nReturn the JSON now.`;
+    return m;
   }
 
-  private buildChatSystemPrompt(context: any): string {
-    return `You are an AI assistant helping a supplier fill out an RFQ quote form.
+  private describeField(f: FormField): string {
+    const req = f.required ? ' (required)' : '';
+    let line = `- [${f.id}] "${f.label}" - type ${f.type}${req}`;
+    if (f.type === 'select' && f.options?.length) {
+      line += ` - options: ${f.options.map((o) => `"${o}"`).join(', ')}`;
+    }
+    if (f.type === 'number' && f.validation) {
+      const { min, max } = f.validation;
+      if (min != null || max != null) line += ` - range ${min ?? '-'}..${max ?? '-'}`;
+    }
+    return line + `\n`;
+  }
 
-Current form state:
+  private buildChatSystemPrompt(context: {
+    formSchema: FormSchema;
+    lineItems: AutofillLineItem[];
+    currentFormData: Record<string, unknown>;
+    currentLinePrices?: Record<string, number>;
+  }): string {
+    const fields = (context.formSchema.fields ?? [])
+      .map((f) => this.describeField(f).trimEnd())
+      .join('\n');
+    const lines = context.lineItems
+      .map(
+        (li) =>
+          `- [lineitem:${li.id}] ${li.itemDescription} (qty ${li.quantity} ${li.unit})` +
+          (context.currentLinePrices?.[li.id] ? ` - currently ${context.currentLinePrices[li.id]}` : '')
+      )
+      .join('\n');
+
+    return `You are helping a supplier complete a FIXED RFQ quote form. You cannot change
+the form.
+
+Form fields:
+${fields || '(none)'}
+
+Line item unit price targets:
+${lines || '(none)'}
+
+Current form values:
 ${JSON.stringify(context.currentFormData, null, 2)}
 
 Your role:
-- Answer questions about the form
-- Help find and fill missing information
-- Suggest data based on documents they've uploaded
-- Explain what information is needed
-- Be helpful and conversational
+- Answer the supplier's questions about the form.
+- When they give you information (typed or pasted), work out which target it
+  fills and propose an update.
+- Keep proposed values in the same shape rules as extraction: numbers are plain
+  numbers; select fields use exactly one allowed option; line prices are plain
+  numbers under "lineitem:<id>".
 
-If you suggest form updates, include them as JSON code block:
+If you propose updates, include them as a JSON code block:
 \`\`\`json
-{
-  "fieldId": "new value"
-}
+{ "<targetId>": <value> }
 \`\`\``;
   }
 }
