@@ -4,7 +4,7 @@ import { rfqInvitations, quoteSubmissions } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { badRequest, notFound, serverError } from '@/lib/api';
 import { loadQuoteContext } from '@/lib/quote-access';
-import { shortSummary } from '@/lib/rfq-content';
+import { normalizeRFQDocument, rfqDocumentToText } from '@/lib/rfq-document';
 
 // Public: load the RFQ + form schema for a supplier's tokenized link.
 export async function GET(
@@ -24,12 +24,19 @@ export async function GET(
         .where(eq(rfqInvitations.id, ctx.invitation.id));
     }
 
-    const draft = safeParse(ctx.rfq.generatedContent);
+    const summary = ctx.rfq.rfqDocument
+      ? rfqDocumentToText(
+          normalizeRFQDocument(ctx.rfq.rfqDocument, {
+            rfqId: ctx.rfq.id,
+            buyer: '',
+          })
+        ).slice(0, 2000)
+      : ctx.rfq.description;
 
     return NextResponse.json({
       rfq: {
         title: ctx.rfq.title,
-        summary: shortSummary(draft ?? { description: ctx.rfq.description }, 2000),
+        summary,
         deadline: ctx.rfq.deadline,
       },
       supplier: { companyName: ctx.supplier.companyName },
@@ -109,14 +116,5 @@ export async function POST(
     return NextResponse.json({ submission }, { status: 201 });
   } catch (error) {
     return serverError(error);
-  }
-}
-
-function safeParse(json: string | null): any {
-  if (!json) return null;
-  try {
-    return JSON.parse(json);
-  } catch {
-    return null;
   }
 }

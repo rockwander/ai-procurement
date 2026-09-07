@@ -1,33 +1,38 @@
 import { BaseAgent, AgentResponse } from './base';
+import {
+  RFQDocument,
+  normalizeRFQDocument,
+  defaultCommercialFields,
+  defaultTerms,
+} from '@/lib/rfq-document';
 
-export interface RFQDraftInput {
-  businessRequirements: string;
-  policyDocuments: Array<{
-    title: string;
-    content: string;
-    category: string;
-  }>;
-  itemCategory?: string;
-  deadline?: string;
+export interface RFQThreadEntry {
+  role: 'user' | 'assistant';
+  kind: 'message' | 'update' | 'attachment';
+  content: string;
+  attachmentName?: string;
 }
 
-export interface RFQDraftOutput {
-  title: string;
-  description: string;
-  requirements: string[];
-  specifications: Record<string, any>;
-  lineItems: Array<{
-    itemDescription: string;
-    quantity: number;
-    unit: string;
-    specifications: Record<string, any>;
-  }>;
-  termsAndConditions: string[];
-  evaluationCriteria: string[];
+export interface RFQDraftInput {
+  /** The whole create-RFQ conversation so far, oldest first. */
+  thread: RFQThreadEntry[];
+  policyDocuments: Array<{ title: string; content: string; category: string }>;
+  buyerName: string;
+  rfqId: string;
+  /** The current RFQ document, if a previous "update" already produced one. */
+  currentDocument?: RFQDocument | null;
 }
 
 export class RFQDraftingAgent extends BaseAgent {
-  async draftRFQ(input: RFQDraftInput, rfqId?: string): Promise<AgentResponse<RFQDraftOutput>> {
+  /**
+   * Regenerate the structured RFQ document from the entire create-RFQ thread.
+   * Called on an explicit "update"; considers every message, pasted content
+   * and attached-document text in the thread.
+   */
+  async draftRFQ(
+    input: RFQDraftInput,
+    rfqId?: string
+  ): Promise<AgentResponse<RFQDocument>> {
     const startTime = Date.now();
 
     try {
@@ -36,21 +41,23 @@ export class RFQDraftingAgent extends BaseAgent {
 
       const { text, tokensUsed } = await this.callGemini(userMessage, {
         systemInstruction: systemPrompt,
-        temperature: 0.7,
+        temperature: 0.6,
       });
 
       const durationMs = Date.now() - startTime;
-      const data = this.parseJsonResponse<RFQDraftOutput>(text);
+      const parsed = this.parseJsonResponse<any>(text);
+      const data = normalizeRFQDocument(parsed, {
+        rfqId: input.rfqId,
+        buyer: input.buyerName,
+      });
 
-      // Calculate cost
       const costUsd = this.calculateCost(tokensUsed);
 
-      // Log execution
       await this.logExecution({
         agentType: 'drafting',
-        rfqId,
-        inputData: input,
-        outputData: data,
+        rfqId: rfqId ?? input.rfqId,
+        inputData: { threadLength: input.thread.length },
+        outputData: { lineItems: data.lineItems.length, questions: data.questionnaire.length },
         modelUsed: this.model,
         tokensUsed,
         costUsd,
@@ -58,23 +65,19 @@ export class RFQDraftingAgent extends BaseAgent {
         success: true,
       });
 
-      console.log(`✅ RFQ drafted successfully (${tokensUsed} tokens, $${costUsd.toFixed(4)})`);
+      console.log(
+        `✅ RFQ document drafted (${data.lineItems.length} line items, ${tokensUsed} tokens, $${costUsd.toFixed(4)})`
+      );
 
-      return {
-        success: true,
-        data,
-        tokensUsed,
-        costUsd,
-        durationMs,
-      };
+      return { success: true, data, tokensUsed, costUsd, durationMs };
     } catch (error) {
       const durationMs = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
       await this.logExecution({
         agentType: 'drafting',
-        rfqId,
-        inputData: input,
+        rfqId: rfqId ?? input.rfqId,
+        inputData: { threadLength: input.thread.length },
         modelUsed: this.model,
         durationMs,
         success: false,
@@ -82,72 +85,90 @@ export class RFQDraftingAgent extends BaseAgent {
       });
 
       console.error('❌ RFQ drafting failed:', error);
-
-      return {
-        success: false,
-        error: errorMessage,
-        durationMs,
-      };
+      return { success: false, error: errorMessage, durationMs };
     }
   }
 
   private buildSystemPrompt(): string {
-    return `You are an expert procurement specialist helping to draft Request for Quotation (RFQ) documents.
+    return `You are an expert procurement specialist who drafts Request for Quotation (RFQ) documents.
 
-Your role is to:
-1. Analyze business requirements and translate them into clear, structured RFQ documents
-2. Ensure compliance with company procurement policies
-3. Generate detailed specifications and evaluation criteria
-4. Create well-structured line items for quotation
+You are given the full conversation a buyer has had while assembling an RFQ:
+their instructions, pasted content, and the text of documents they attached
+(business requirements, policies, spec sheets). Produce ONE structured RFQ
+document that reflects everything in the thread and complies with any policies.
 
-Output Format:
-Return a JSON object with this structure:
+Return ONLY a JSON object with this exact shape:
 {
-  "title": "Clear, descriptive RFQ title",
-  "description": "Comprehensive overview of the procurement need",
-  "requirements": ["List of general requirements"],
-  "specifications": {"key": "Technical specifications as object"},
+  "header": {
+    "buyer": "buyer / company name",
+    "rfqId": "keep the id you are given",
+    "quoteDeadline": "e.g. 15 Sep 2026",
+    "expectedDelivery": "e.g. Monthly supply, starting Oct 2026",
+    "currency": "e.g. INR",
+    "validity": "e.g. Quote valid for 90 days"
+  },
   "lineItems": [
-    {
-      "itemDescription": "Description",
-      "quantity": number,
-      "unit": "unit of measurement",
-      "specifications": {"key": "Item-specific specs"}
-    }
+    { "item": "Carton Box A", "specification": "5-ply, 12x10x8 in", "quantity": 10000, "unit": "pcs" }
   ],
-  "termsAndConditions": ["List of terms"],
-  "evaluationCriteria": ["How quotes will be evaluated"]
+  "commercialFields": [
+    { "label": "Unit price", "type": "number", "required": true },
+    { "label": "Lead time", "type": "text", "required": true }
+  ],
+  "questionnaire": [
+    { "question": "Do you have ISO 9001 certification?", "responseType": "yesno", "required": true }
+  ],
+  "supportingDocsNote": "Upload certificates / relevant documents.",
+  "termsAndConditions": ["Delivery location", "Payment terms", "..."]
 }
 
-Important:
-- Be specific and unambiguous
-- Include all policy requirements
-- Use professional procurement language
-- Ensure compliance with provided policies`;
+Rules:
+- lineItems: extract every distinct item the buyer wants quoted, with realistic
+  quantities and units. Dozens of rows are fine.
+- commercialFields: the fields a vendor must fill FOR EACH line item. Default to
+  unit price, currency, unit of measurement, MOQ, lead time, applicable taxes,
+  freight/transport charges, discount — adjust to the buyer's needs.
+- questionnaire: quality / capability questions. responseType is "yesno",
+  "text", or "file".
+- termsAndConditions: a list of short strings.
+- Do not invent facts the thread doesn't support; leave a header field as ""
+  if unknown.
+- Output valid JSON only, no prose, no code fence needed.`;
   }
 
   private buildUserMessage(input: RFQDraftInput): string {
-    let message = `Draft an RFQ document based on the following information:\n\n`;
+    let m = `RFQ id: ${input.rfqId}\nBuyer: ${input.buyerName}\n\n`;
 
-    message += `## Business Requirements:\n${input.businessRequirements}\n\n`;
-
-    if (input.itemCategory) {
-      message += `## Item Category:\n${input.itemCategory}\n\n`;
-    }
-
-    if (input.deadline) {
-      message += `## Deadline:\n${input.deadline}\n\n`;
+    if (input.currentDocument) {
+      m += `## Current RFQ document (revise this based on the latest thread)\n`;
+      m += '```json\n' + JSON.stringify(input.currentDocument, null, 2) + '\n```\n\n';
     }
 
     if (input.policyDocuments.length > 0) {
-      message += `## Company Policies (must be followed):\n\n`;
-      input.policyDocuments.forEach((policy) => {
-        message += `### ${policy.title} (${policy.category})\n${policy.content}\n\n`;
+      m += `## Company policies (must be complied with)\n\n`;
+      input.policyDocuments.forEach((p) => {
+        m += `### ${p.title} (${p.category})\n${p.content}\n\n`;
       });
     }
 
-    message += `\nPlease generate a comprehensive RFQ document that addresses all requirements and complies with all policies. Return the result as a JSON object.`;
+    m += `## Conversation thread (oldest first)\n\n`;
+    input.thread.forEach((e) => {
+      if (e.kind === 'attachment') {
+        m += `[${e.role} attached document: ${e.attachmentName ?? 'document'}]\n${e.content}\n\n`;
+      } else if (e.kind === 'update') {
+        m += `[${e.role} requested an update]\n`;
+        if (e.content) m += `${e.content}\n`;
+        m += `\n`;
+      } else {
+        m += `${e.role}: ${e.content}\n\n`;
+      }
+    });
 
-    return message;
+    m += `\nGenerate the RFQ document JSON now.`;
+    return m;
+  }
+
+  /** Fallbacks re-exported for callers that need a starting document. */
+  static defaults() {
+    return { commercialFields: defaultCommercialFields(), terms: defaultTerms() };
   }
 }

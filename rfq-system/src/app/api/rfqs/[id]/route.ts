@@ -3,6 +3,8 @@ import { db } from '@/db';
 import { rfqs, rfqLineItems } from '@/db/schema';
 import { eq, asc } from 'drizzle-orm';
 import { getAuthUser, unauthorized, notFound, badRequest, serverError } from '@/lib/api';
+import { applyRFQDocument } from '@/lib/rfq-persist';
+import type { RFQDocument } from '@/lib/rfq-document';
 
 // Fetch a single RFQ with its line items
 export async function GET(
@@ -29,7 +31,12 @@ export async function GET(
   }
 }
 
-// Update an RFQ (e.g. edit the form schema before sending)
+/**
+ * Update a draft RFQ.
+ * - `rfqDocument`: a full document from the form builder — applied immediately
+ *   (re-derives form schema + line items, snapshots as a 'manual' version).
+ * - `deadline`: convenience field.
+ */
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -46,32 +53,21 @@ export async function PATCH(
     }
 
     const body = await request.json();
+
+    if (body.rfqDocument) {
+      const applied = await applyRFQDocument(id, body.rfqDocument as RFQDocument, 'manual');
+      const [rfq] = await db.select().from(rfqs).where(eq(rfqs.id, id));
+      return NextResponse.json({ rfq, rfqDocument: applied });
+    }
+
+    // Fallback: light metadata patch.
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (typeof body.title === 'string') patch.title = body.title;
     if (typeof body.description === 'string') patch.description = body.description;
-    if (body.formSchema) patch.formSchema = body.formSchema;
     if (body.deadline !== undefined) {
       patch.deadline = body.deadline ? new Date(body.deadline) : null;
     }
-
     const [rfq] = await db.update(rfqs).set(patch).where(eq(rfqs.id, id)).returning();
-
-    if (Array.isArray(body.lineItems)) {
-      await db.delete(rfqLineItems).where(eq(rfqLineItems.rfqId, id));
-      if (body.lineItems.length > 0) {
-        await db.insert(rfqLineItems).values(
-          body.lineItems.map((li: any, index: number) => ({
-            rfqId: id,
-            itemDescription: li.itemDescription,
-            quantity: li.quantity,
-            unit: li.unit,
-            specifications: li.specifications ?? {},
-            orderIndex: index,
-          }))
-        );
-      }
-    }
-
     return NextResponse.json({ rfq });
   } catch (error) {
     return serverError(error);

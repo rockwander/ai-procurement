@@ -1,35 +1,52 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
-import { FormBuilder } from '@/components/FormBuilder';
-import { Button, Card, Input, Textarea, Spinner, ErrorText, Badge } from '@/components/ui';
+import { RFQDocumentBuilder } from '@/components/RFQDocumentBuilder';
+import { Button, Card, Spinner, ErrorText, Badge } from '@/components/ui';
 import { api } from '@/lib/fetcher';
-import { FormSchema, emptySchema } from '@/lib/form-schema';
-import type { RFQDraftOutput } from '@/lib/agents/rfq-drafting';
+import type { RFQDocument } from '@/lib/rfq-document';
+import { SUPPORTED_DOC_EXTENSIONS } from '@/lib/doc-types';
 
 interface Policy {
   id: string;
   title: string;
   category: string;
 }
+interface DraftMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  kind: 'message' | 'update' | 'attachment';
+  content: string;
+  attachmentName: string | null;
+}
+
+type View = 'pdf' | 'builder';
 
 export default function NewRFQPage() {
   const router = useRouter();
+
+  // Step 0: choose policies, then start the chat (creates the draft RFQ).
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [selectedPolicies, setSelectedPolicies] = useState<string[]>([]);
-  const [requirements, setRequirements] = useState('');
-  const [itemCategory, setItemCategory] = useState('');
-  const [deadline, setDeadline] = useState('');
+  const [rfqId, setRfqId] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
 
-  const [drafting, setDrafting] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [messages, setMessages] = useState<DraftMessage[]>([]);
+  const [doc, setDoc] = useState<RFQDocument | null>(null);
+  const [hasContent, setHasContent] = useState(false);
+
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [savingDoc, setSavingDoc] = useState(false);
   const [error, setError] = useState('');
+  const [view, setView] = useState<View>('pdf');
+  const [pdfNonce, setPdfNonce] = useState(0);
 
-  const [draft, setDraft] = useState<RFQDraftOutput | null>(null);
-  const [schema, setSchema] = useState<FormSchema>(emptySchema());
-  const [usage, setUsage] = useState<any>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api<{ policies: Policy[] }>('/api/policies')
@@ -37,107 +54,153 @@ export default function NewRFQPage() {
       .catch(() => {});
   }, []);
 
-  async function generate() {
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages]);
+
+  async function startChat() {
     setError('');
-    setDrafting(true);
+    setStarting(true);
     try {
-      const res = await api<{
-        draft: RFQDraftOutput;
-        formSchema: FormSchema;
-        usage: any;
-      }>('/api/rfqs/draft', {
-        method: 'POST',
-        body: JSON.stringify({
-          businessRequirements: requirements,
-          policyIds: selectedPolicies,
-          itemCategory: itemCategory || undefined,
-          deadline: deadline || undefined,
-        }),
-      });
-      setDraft(res.draft);
-      setSchema(
-        res.formSchema?.fields?.length ? res.formSchema : emptySchema()
+      const res = await api<{ rfq: { id: string; rfqDocument: RFQDocument } }>(
+        '/api/rfqs',
+        {
+          method: 'POST',
+          body: JSON.stringify({ policyIds: selectedPolicies }),
+        }
       );
-      setUsage(res.usage);
+      setRfqId(res.rfq.id);
+      setDoc(res.rfq.rfqDocument);
+      setMessages([
+        {
+          id: 'seed',
+          role: 'assistant',
+          kind: 'message',
+          content:
+            'Attach your business requirements, policy or spec documents (or paste content), and tell me what you need. When you\'re done, type "update" and I\'ll build the RFQ from the whole conversation. Say "update" again any time to revise.',
+          attachmentName: null,
+        },
+      ]);
     } catch (e: any) {
       setError(e.message);
     } finally {
-      setDrafting(false);
+      setStarting(false);
     }
   }
 
-  async function save() {
-    if (!draft) return;
+  async function send(action: 'message' | 'update') {
+    if (!rfqId || busy) return;
+    const text = input.trim();
+    if (action === 'message' && !text) return;
+    setBusy(true);
     setError('');
-    setSaving(true);
+    // optimistic
+    setMessages((m) => [
+      ...m,
+      {
+        id: `tmp-${Date.now()}`,
+        role: 'user',
+        kind: action === 'update' ? 'update' : 'message',
+        content: text || '(update)',
+        attachmentName: null,
+      },
+    ]);
+    setInput('');
     try {
-      const res = await api<{ rfq: { id: string } }>('/api/rfqs', {
+      const res = await api<{
+        assistant: DraftMessage;
+        regenerated: boolean;
+        rfqDocument?: RFQDocument;
+      }>(`/api/rfqs/${rfqId}/draft-chat`, {
         method: 'POST',
-        body: JSON.stringify({
-          title: draft.title,
-          description: draft.description,
-          generatedContent: draft,
-          formSchema: schema,
-          lineItems: draft.lineItems,
-          policyIds: selectedPolicies,
-          deadline: deadline || undefined,
-        }),
+        body: JSON.stringify({ message: text || undefined, action }),
       });
-      router.push(`/dashboard/rfqs/${res.rfq.id}`);
+      setMessages((m) => [...m, res.assistant]);
+      if (res.regenerated && res.rfqDocument) {
+        setDoc(res.rfqDocument);
+        setHasContent(true);
+        setView('pdf');
+        setPdfNonce((n) => n + 1);
+      }
     } catch (e: any) {
       setError(e.message);
-      setSaving(false);
+    } finally {
+      setBusy(false);
     }
   }
 
-  return (
-    <AppShell>
-      <h1 className="text-2xl font-bold text-gray-900 mb-1">Create RFQ</h1>
-      <p className="text-gray-500 mb-6 text-sm">
-        Describe the need and pick applicable policies. The drafting agent writes
-        the RFQ and a starter quote form for you to refine.
-      </p>
+  async function upload(file: File) {
+    if (!rfqId) return;
+    setUploading(true);
+    setError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`/api/rfqs/${rfqId}/attachments`, {
+        method: 'POST',
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setMessages((m) => [
+        ...m,
+        {
+          id: data.attachment.id,
+          role: 'user',
+          kind: 'attachment',
+          content: `Attached ${data.attachment.name} (${data.attachment.chars.toLocaleString()} chars${
+            data.attachment.truncated ? ', truncated' : ''
+          })`,
+          attachmentName: data.attachment.name,
+        },
+      ]);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  }
 
-      {error && <div className="mb-4"><ErrorText>{error}</ErrorText></div>}
+  // Persist form-builder edits (debounced), then refresh the PDF.
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function onDocEdit(next: RFQDocument) {
+    setDoc(next);
+    if (!rfqId) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSavingDoc(true);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        const res = await api<{ rfqDocument: RFQDocument }>(`/api/rfqs/${rfqId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ rfqDocument: next }),
+        });
+        setDoc(res.rfqDocument);
+        setHasContent(true);
+        setPdfNonce((n) => n + 1);
+      } catch (e: any) {
+        setError(e.message);
+      } finally {
+        setSavingDoc(false);
+      }
+    }, 800);
+  }
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* Inputs */}
-        <Card className="p-5 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Business requirements
-            </label>
-            <Textarea
-              rows={7}
-              value={requirements}
-              onChange={(e) => setRequirements(e.target.value)}
-              placeholder="e.g. We need 50 business laptops for the new sales team, delivered within 6 weeks. Must run our standard security image, 3-year warranty…"
-            />
-          </div>
+  async function saveAndOpen() {
+    if (!rfqId) return;
+    router.push(`/dashboard/rfqs/${rfqId}`);
+  }
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Item category
-              </label>
-              <Input
-                value={itemCategory}
-                onChange={(e) => setItemCategory(e.target.value)}
-                placeholder="IT Equipment"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Response deadline
-              </label>
-              <Input
-                type="date"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
-              />
-            </div>
-          </div>
+  // ---------- render ----------
 
+  if (!rfqId) {
+    return (
+      <AppShell>
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">Create RFQ</h1>
+        <p className="text-gray-500 mb-6 text-sm">
+          Pick any applicable policies, then start a conversation to build the RFQ.
+        </p>
+        {error && <div className="mb-4"><ErrorText>{error}</ErrorText></div>}
+        <Card className="p-5 max-w-lg space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Policy documents
@@ -167,78 +230,159 @@ export default function NewRFQPage() {
               )}
             </div>
           </div>
-
-          <Button onClick={generate} disabled={drafting || requirements.trim().length < 10}>
-            {drafting ? 'Drafting…' : draft ? 'Regenerate' : 'Generate RFQ with AI'}
+          <Button onClick={startChat} disabled={starting}>
+            {starting ? 'Starting…' : 'Start building RFQ'}
           </Button>
-          {drafting && <Spinner label="Running drafting + form-generation agents…" />}
+        </Card>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold text-gray-900">Create RFQ</h1>
+        <div className="flex items-center gap-2">
+          {savingDoc && <span className="text-xs text-gray-400">saving…</span>}
+          <Button variant="secondary" onClick={saveAndOpen}>
+            {hasContent ? 'Done — open RFQ' : 'Save & exit'}
+          </Button>
+        </div>
+      </div>
+
+      {error && <div className="mb-4"><ErrorText>{error}</ErrorText></div>}
+
+      <div className="grid lg:grid-cols-2 gap-6" style={{ minHeight: '70vh' }}>
+        {/* Chat */}
+        <Card className="p-0 flex flex-col">
+          <div className="px-4 py-2 border-b border-gray-200 font-semibold text-gray-900 text-sm">
+            Conversation
+          </div>
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[60vh]">
+            {messages.map((m) => (
+              <div
+                key={m.id}
+                className={`text-sm ${m.role === 'user' ? 'text-right' : 'text-left'}`}
+              >
+                <span
+                  className={`inline-block px-3 py-2 rounded-lg whitespace-pre-wrap max-w-[90%] ${
+                    m.kind === 'attachment'
+                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                      : m.kind === 'update'
+                      ? 'bg-blue-100 text-blue-800 font-medium'
+                      : m.role === 'user'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-800'
+                  }`}
+                >
+                  {m.kind === 'attachment' ? `📎 ${m.content}` : m.content}
+                </span>
+              </div>
+            ))}
+            {busy && <div className="text-sm text-gray-400">working…</div>}
+          </div>
+
+          <div className="border-t border-gray-200 p-3 space-y-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept={SUPPORTED_DOC_EXTENSIONS.join(',')}
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) upload(f);
+                e.target.value = '';
+              }}
+            />
+            <textarea
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              rows={2}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder='Describe the need, paste content, or type "update"…'
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send('message');
+              }}
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+              >
+                {uploading ? 'Reading…' : 'Attach document'}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => send('message')} disabled={busy}>
+                Send
+              </Button>
+              <Button size="sm" onClick={() => send('update')} disabled={busy}>
+                Update RFQ
+              </Button>
+            </div>
+            <p className="text-xs text-gray-400">
+              Accepts {SUPPORTED_DOC_EXTENSIONS.join(', ')}. “Update RFQ” regenerates
+              from the whole conversation.
+            </p>
+          </div>
         </Card>
 
-        {/* Draft preview + form builder */}
-        <Card className="p-5 space-y-4">
-          {!draft ? (
-            <p className="text-sm text-gray-400">
-              The generated RFQ and quote form will appear here.
-            </p>
-          ) : (
-            <>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase mb-1">
-                  Title
-                </label>
-                <Input
-                  value={draft.title}
-                  onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase mb-1">
-                  Description
-                </label>
-                <Textarea
-                  rows={4}
-                  value={draft.description}
-                  onChange={(e) =>
-                    setDraft({ ...draft, description: e.target.value })
-                  }
-                />
-              </div>
+        {/* RFQ views */}
+        <Card className="p-0 flex flex-col">
+          <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between">
+            <div className="flex gap-1 text-sm">
+              <button
+                onClick={() => setView('pdf')}
+                className={`px-3 py-1 rounded ${
+                  view === 'pdf' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                PDF document
+              </button>
+              <button
+                onClick={() => setView('builder')}
+                className={`px-3 py-1 rounded ${
+                  view === 'builder'
+                    ? 'bg-gray-900 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                Form builder
+              </button>
+            </div>
+            {hasContent && (
+              <a
+                href={`/api/rfqs/${rfqId}/pdf?v=${pdfNonce}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-blue-600 hover:underline"
+              >
+                open in new tab
+              </a>
+            )}
+          </div>
 
-              <div>
-                <p className="text-xs font-medium text-gray-500 uppercase mb-1">
-                  Line items ({draft.lineItems.length})
-                </p>
-                <ul className="text-sm text-gray-700 list-disc pl-5 space-y-0.5">
-                  {draft.lineItems.map((li, i) => (
-                    <li key={i}>
-                      {li.itemDescription} — {li.quantity} {li.unit}
-                    </li>
-                  ))}
-                </ul>
+          <div className="flex-1 overflow-y-auto">
+            {!hasContent ? (
+              <div className="p-8 text-center text-sm text-gray-400">
+                No RFQ yet. Add details in the conversation and press{' '}
+                <span className="font-medium">Update RFQ</span>.
               </div>
-
-              <div>
-                <p className="text-xs font-medium text-gray-500 uppercase mb-2">
-                  Quote form builder
-                </p>
-                <FormBuilder schema={schema} onChange={setSchema} />
+            ) : view === 'pdf' ? (
+              <iframe
+                key={pdfNonce}
+                src={`/api/rfqs/${rfqId}/pdf?v=${pdfNonce}`}
+                className="w-full h-[65vh] border-0"
+                title="RFQ PDF"
+              />
+            ) : doc ? (
+              <div className="p-4">
+                <RFQDocumentBuilder doc={doc} onChange={onDocEdit} />
               </div>
-
-              {usage && (
-                <p className="text-xs text-gray-400">
-                  AI cost ~$
-                  {(
-                    (usage.drafting?.costUsd ?? 0) +
-                    (usage.formGeneration?.costUsd ?? 0)
-                  ).toFixed(4)}
-                </p>
-              )}
-
-              <Button onClick={save} disabled={saving}>
-                {saving ? 'Saving…' : 'Save RFQ'}
-              </Button>
-            </>
-          )}
+            ) : (
+              <Spinner label="Loading…" />
+            )}
+          </div>
         </Card>
       </div>
     </AppShell>

@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { rfqs, rfqLineItems, suppliers, rfqInvitations } from '@/db/schema';
-import { eq, asc, inArray } from 'drizzle-orm';
+import { rfqs, suppliers, rfqInvitations } from '@/db/schema';
+import { eq, inArray } from 'drizzle-orm';
 import { getAuthUser, unauthorized, notFound, badRequest, serverError } from '@/lib/api';
 import { generateRFQPDF } from '@/lib/pdf';
 import { sendRFQEmail } from '@/lib/email';
-import { shortSummary } from '@/lib/rfq-content';
+import { normalizeRFQDocument, rfqDocumentToText } from '@/lib/rfq-document';
+
+export const runtime = 'nodejs';
 
 /**
  * Send an RFQ to a selected set of suppliers.
@@ -29,12 +31,9 @@ export async function POST(
 
     const [rfq] = await db.select().from(rfqs).where(eq(rfqs.id, id));
     if (!rfq) return notFound('RFQ not found');
-
-    const lineItems = await db
-      .select()
-      .from(rfqLineItems)
-      .where(eq(rfqLineItems.rfqId, id))
-      .orderBy(asc(rfqLineItems.orderIndex));
+    if (!rfq.rfqDocument || !rfq.hasContent) {
+      return badRequest('This RFQ has no content yet. Run "update" in the chat first.');
+    }
 
     const selectedSuppliers = await db
       .select()
@@ -55,24 +54,15 @@ export async function POST(
       return badRequest('All selected suppliers have already been invited');
     }
 
-    const draft = safeParse(rfq.generatedContent);
-    const summary = shortSummary(draft ?? { description: rfq.description });
+    const doc = normalizeRFQDocument(rfq.rfqDocument, {
+      rfqId: rfq.id,
+      buyer: user.name,
+    });
+    const summary = rfqDocumentToText(doc).slice(0, 600);
 
     const pdfBuffer = await generateRFQPDF({
-      rfqNumber: rfq.id.slice(0, 8).toUpperCase(),
-      title: rfq.title,
-      description: rfq.description,
-      createdDate: new Date(rfq.createdAt).toLocaleDateString(),
-      deadline: rfq.deadline ? new Date(rfq.deadline).toLocaleDateString() : undefined,
-      lineItems: lineItems.map((li) => ({
-        itemDescription: li.itemDescription,
-        quantity: li.quantity,
-        unit: li.unit,
-        specifications: (li.specifications as Record<string, unknown>) ?? undefined,
-      })),
-      requirements: draft?.requirements,
-      termsAndConditions: draft?.termsAndConditions,
-      evaluationCriteria: draft?.evaluationCriteria,
+      doc,
+      issueDate: new Date(rfq.createdAt).toLocaleDateString(),
     });
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
@@ -128,14 +118,5 @@ export async function POST(
     return NextResponse.json({ results });
   } catch (error) {
     return serverError(error);
-  }
-}
-
-function safeParse(json: string | null): any {
-  if (!json) return null;
-  try {
-    return JSON.parse(json);
-  } catch {
-    return null;
   }
 }

@@ -1,9 +1,12 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/db';
-import { rfqs, rfqLineItems } from '@/db/schema';
-import { eq, asc } from 'drizzle-orm';
-import { getAuthUser, unauthorized, notFound, serverError } from '@/lib/api';
+import { rfqs } from '@/db/schema';
+import { eq } from 'drizzle-orm';
+import { getAuthUser, unauthorized, notFound, badRequest, serverError } from '@/lib/api';
 import { generateRFQPDF } from '@/lib/pdf';
+import { normalizeRFQDocument } from '@/lib/rfq-document';
+
+export const runtime = 'nodejs';
 
 // Render the RFQ PDF for preview/download.
 export async function GET(
@@ -17,32 +20,18 @@ export async function GET(
 
     const [rfq] = await db.select().from(rfqs).where(eq(rfqs.id, id));
     if (!rfq) return notFound('RFQ not found');
+    if (!rfq.rfqDocument) {
+      return badRequest('This RFQ has no content yet. Run "update" in the chat first.');
+    }
 
-    const lineItems = await db
-      .select()
-      .from(rfqLineItems)
-      .where(eq(rfqLineItems.rfqId, id))
-      .orderBy(asc(rfqLineItems.orderIndex));
-
-    let draft: any = null;
-    try {
-      draft = rfq.generatedContent ? JSON.parse(rfq.generatedContent) : null;
-    } catch {}
+    const doc = normalizeRFQDocument(rfq.rfqDocument, {
+      rfqId: rfq.id,
+      buyer: user.name,
+    });
 
     const buffer = await generateRFQPDF({
-      rfqNumber: rfq.id.slice(0, 8).toUpperCase(),
-      title: rfq.title,
-      description: rfq.description,
-      createdDate: new Date(rfq.createdAt).toLocaleDateString(),
-      deadline: rfq.deadline ? new Date(rfq.deadline).toLocaleDateString() : undefined,
-      lineItems: lineItems.map((li) => ({
-        itemDescription: li.itemDescription,
-        quantity: li.quantity,
-        unit: li.unit,
-      })),
-      requirements: draft?.requirements,
-      termsAndConditions: draft?.termsAndConditions,
-      evaluationCriteria: draft?.evaluationCriteria,
+      doc,
+      issueDate: new Date(rfq.createdAt).toLocaleDateString(),
     });
 
     return new Response(new Uint8Array(buffer), {

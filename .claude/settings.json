@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run db:push:*)",
+      "Bash(npm run db:generate:*)",
+      "Bash(npx drizzle-kit push:*)",
+      "Bash(npx drizzle-kit generate:*)",
+      "Bash(node /private/tmp/claude-501/*/scratchpad/*.mjs)"
+    ]
+  }
+}

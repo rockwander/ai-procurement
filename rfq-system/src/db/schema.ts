@@ -34,16 +34,49 @@ export const policyDocuments = pgTable('policy_documents', {
 // RFQs
 export const rfqs = pgTable('rfqs', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  title: text('title').notNull(),
-  description: text('description').notNull(),
+  title: text('title').notNull().default('Untitled RFQ'),
+  description: text('description').notNull().default(''),
   createdBy: text('created_by').notNull().references(() => users.id),
   policyReferences: jsonb('policy_references'),  // array of policy IDs
   status: text('status', { enum: ['draft', 'sent', 'evaluating', 'awarded', 'cancelled'] }).notNull().default('draft'),
   deadline: timestamp('deadline'),
-  formSchema: jsonb('form_schema').notNull(),  // form builder schema
-  generatedContent: text('generated_content'),  // AI-generated RFQ content
+  formSchema: jsonb('form_schema').notNull().default({ sections: [], fields: [] }),  // form builder schema
+  // Structured RFQ document (header / line items / commercial fields /
+  // questionnaire / terms). Canonical since the conversational-creation
+  // refinement; the PDF and form builder both render this.
+  rfqDocument: jsonb('rfq_document'),
+  generatedContent: text('generated_content'),  // legacy AI-generated RFQ content (pre-refinement)
+  // True once the buyer has run at least one "update" so the RFQ has content.
+  hasContent: boolean('has_content').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Chat thread for the conversational RFQ-creation flow. The buyer adds
+// messages / pasted content / attached-document text; on an explicit
+// "update" the Drafting Agent regenerates the RFQ from the whole thread.
+export const rfqDraftMessages = pgTable('rfq_draft_messages', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  rfqId: text('rfq_id').notNull().references(() => rfqs.id, { onDelete: 'cascade' }),
+  role: text('role', { enum: ['user', 'assistant', 'system'] }).notNull(),
+  // 'message' = normal turn; 'update' = the buyer triggered a regeneration;
+  // 'attachment' = extracted text from an uploaded / pasted document.
+  kind: text('kind', { enum: ['message', 'update', 'attachment'] }).notNull().default('message'),
+  content: text('content').notNull(),
+  attachmentName: text('attachment_name'),  // original filename for kind='attachment'
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// One snapshot of the RFQ document + form schema per "update" (history kept).
+export const rfqDocumentVersions = pgTable('rfq_document_versions', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  rfqId: text('rfq_id').notNull().references(() => rfqs.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(),
+  rfqDocument: jsonb('rfq_document').notNull(),
+  formSchema: jsonb('form_schema').notNull(),
+  // 'ai' = produced by an "update"; 'manual' = form-builder edit saved.
+  source: text('source', { enum: ['ai', 'manual'] }).notNull().default('ai'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
 // RFQ Line Items
@@ -176,6 +209,12 @@ export type NewPolicyDocument = typeof policyDocuments.$inferInsert;
 
 export type RFQ = typeof rfqs.$inferSelect;
 export type NewRFQ = typeof rfqs.$inferInsert;
+
+export type RFQDraftMessage = typeof rfqDraftMessages.$inferSelect;
+export type NewRFQDraftMessage = typeof rfqDraftMessages.$inferInsert;
+
+export type RFQDocumentVersion = typeof rfqDocumentVersions.$inferSelect;
+export type NewRFQDocumentVersion = typeof rfqDocumentVersions.$inferInsert;
 
 export type RFQLineItem = typeof rfqLineItems.$inferSelect;
 export type NewRFQLineItem = typeof rfqLineItems.$inferInsert;

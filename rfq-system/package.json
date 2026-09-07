@@ -39,7 +39,9 @@
     "drizzle-orm": "^0.36.4",
     "jose": "^5.9.6",
     "lucide-react": "^0.460.0",
+    "mammoth": "^1.12.2",
     "next": "^15.5.25",
+    "pdf-parse": "^2.4.5",
     "react": "^19.0.0-rc.1",
     "react-dom": "^19.0.0-rc.1",
     "react-dropzone": "^14.2.10",
@@ -54,6 +56,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22",
+    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.28.1",

@@ -1,166 +1,173 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import type { RFQDocument } from '@/lib/rfq-document';
 
 const styles = StyleSheet.create({
-  page: {
-    padding: 40,
-    fontSize: 11,
-    fontFamily: 'Helvetica',
-  },
-  header: {
-    marginBottom: 20,
-    borderBottom: '2 solid #2563eb',
-    paddingBottom: 10,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#2563eb',
-    marginBottom: 5,
-  },
-  subtitle: {
-    fontSize: 12,
-    color: '#666',
-  },
-  section: {
-    marginTop: 15,
-    marginBottom: 10,
-  },
+  page: { padding: 40, fontSize: 10, fontFamily: 'Helvetica', lineHeight: 1.4 },
+  header: { marginBottom: 16, borderBottom: '2 solid #2563eb', paddingBottom: 8 },
+  title: { fontSize: 20, fontWeight: 'bold', color: '#2563eb', marginBottom: 4 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 },
+  meta: { width: '50%', marginBottom: 2 },
+  metaLabel: { fontWeight: 'bold' },
+  section: { marginTop: 14 },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: 'bold',
-    marginBottom: 8,
+    marginBottom: 6,
     color: '#1f2937',
   },
-  text: {
-    marginBottom: 5,
-    lineHeight: 1.5,
-  },
-  table: {
-    marginTop: 10,
-    marginBottom: 10,
-  },
-  tableRow: {
-    flexDirection: 'row',
-    borderBottom: '1 solid #e5e7eb',
-    paddingVertical: 8,
-  },
-  tableHeader: {
-    backgroundColor: '#f3f4f6',
-    fontWeight: 'bold',
-  },
-  tableCell: {
-    flex: 1,
-    paddingHorizontal: 5,
-  },
+  row: { flexDirection: 'row', borderBottom: '1 solid #e5e7eb', paddingVertical: 4 },
+  headerRow: { backgroundColor: '#f3f4f6', fontWeight: 'bold' },
+  cLine: { width: '8%' },
+  cItem: { width: '32%' },
+  cSpec: { width: '35%' },
+  cQty: { width: '13%' },
+  cUnit: { width: '12%' },
+  bullet: { marginBottom: 2 },
+  qRow: { flexDirection: 'row', borderBottom: '1 solid #e5e7eb', paddingVertical: 4 },
+  qCol: { width: '75%' },
+  qResp: { width: '25%', color: '#6b7280' },
+  note: { marginTop: 6, fontStyle: 'italic', color: '#374151' },
   footer: {
     position: 'absolute',
-    bottom: 30,
+    bottom: 28,
     left: 40,
     right: 40,
     textAlign: 'center',
-    fontSize: 9,
+    fontSize: 8,
     color: '#666',
     borderTop: '1 solid #e5e7eb',
-    paddingTop: 10,
+    paddingTop: 8,
   },
 });
 
-export interface RFQPDFData {
-  rfqNumber: string;
-  title: string;
-  description: string;
-  createdDate: string;
-  deadline?: string;
-  lineItems: Array<{
-    itemDescription: string;
-    quantity: number;
-    unit: string;
-    specifications?: Record<string, any>;
-  }>;
-  requirements?: string[];
-  termsAndConditions?: string[];
-  evaluationCriteria?: string[];
+const RESP_LABEL: Record<string, string> = {
+  yesno: 'Yes / No',
+  text: 'Free text',
+  file: 'Upload',
+};
+
+export interface RFQPDFProps {
+  doc: RFQDocument;
+  issueDate: string;
 }
 
-export const RFQPDFDocument: React.FC<{ data: RFQPDFData }> = ({ data }) => (
-  <Document>
-    <Page size="A4" style={styles.page}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Request for Quotation</Text>
-        <Text style={styles.subtitle}>RFQ #{data.rfqNumber}</Text>
-      </View>
-
-      {/* Basic Info */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{data.title}</Text>
-        <Text style={styles.text}>{data.description}</Text>
-        <Text style={styles.text}>Issue Date: {data.createdDate}</Text>
-        {data.deadline && (
-          <Text style={styles.text}>Submission Deadline: {data.deadline}</Text>
-        )}
-      </View>
-
-      {/* Line Items */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Line Items</Text>
-        <View style={styles.table}>
-          <View style={[styles.tableRow, styles.tableHeader]}>
-            <Text style={[styles.tableCell, { flex: 3 }]}>Description</Text>
-            <Text style={styles.tableCell}>Quantity</Text>
-            <Text style={styles.tableCell}>Unit</Text>
+export const RFQPDFDocument: React.FC<{ data: RFQPDFProps }> = ({ data }) => {
+  const { doc, issueDate } = data;
+  const h = doc.header;
+  return (
+    <Document>
+      <Page size="A4" style={styles.page} wrap>
+        <View style={styles.header}>
+          <Text style={styles.title}>Request for Quotation</Text>
+          <View style={styles.metaRow}>
+            <Text style={styles.meta}>
+              <Text style={styles.metaLabel}>Buyer: </Text>
+              {h.buyer || '—'}
+            </Text>
+            <Text style={styles.meta}>
+              <Text style={styles.metaLabel}>RFQ ID: </Text>
+              {h.rfqId}
+            </Text>
+            <Text style={styles.meta}>
+              <Text style={styles.metaLabel}>Quote deadline: </Text>
+              {h.quoteDeadline || '—'}
+            </Text>
+            <Text style={styles.meta}>
+              <Text style={styles.metaLabel}>Expected delivery: </Text>
+              {h.expectedDelivery || '—'}
+            </Text>
+            <Text style={styles.meta}>
+              <Text style={styles.metaLabel}>Currency: </Text>
+              {h.currency || '—'}
+            </Text>
+            <Text style={styles.meta}>
+              <Text style={styles.metaLabel}>Validity: </Text>
+              {h.validity || '—'}
+            </Text>
+            <Text style={styles.meta}>
+              <Text style={styles.metaLabel}>Issued: </Text>
+              {issueDate}
+            </Text>
           </View>
-          {data.lineItems.map((item, index) => (
-            <View key={index} style={styles.tableRow}>
-              <Text style={[styles.tableCell, { flex: 3 }]}>{item.itemDescription}</Text>
-              <Text style={styles.tableCell}>{item.quantity}</Text>
-              <Text style={styles.tableCell}>{item.unit}</Text>
+        </View>
+
+        {/* 1. Line items */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>1. Line items</Text>
+          <View style={[styles.row, styles.headerRow]}>
+            <Text style={styles.cLine}>Line</Text>
+            <Text style={styles.cItem}>Item</Text>
+            <Text style={styles.cSpec}>Specification</Text>
+            <Text style={styles.cQty}>Qty</Text>
+            <Text style={styles.cUnit}>Unit</Text>
+          </View>
+          {doc.lineItems.map((li) => (
+            <View key={li.id} style={styles.row} wrap={false}>
+              <Text style={styles.cLine}>{li.line}</Text>
+              <Text style={styles.cItem}>{li.item}</Text>
+              <Text style={styles.cSpec}>{li.specification}</Text>
+              <Text style={styles.cQty}>{li.quantity.toLocaleString()}</Text>
+              <Text style={styles.cUnit}>{li.unit}</Text>
             </View>
           ))}
+          {doc.lineItems.length === 0 && (
+            <Text style={styles.bullet}>No line items specified.</Text>
+          )}
         </View>
-      </View>
 
-      {/* Requirements */}
-      {data.requirements && data.requirements.length > 0 && (
+        {/* 2. Commercial information requested */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Requirements</Text>
-          {data.requirements.map((req, index) => (
-            <Text key={index} style={styles.text}>
-              • {req}
+          <Text style={styles.sectionTitle}>2. Commercial information requested</Text>
+          <Text style={styles.bullet}>For each line item, the vendor should provide:</Text>
+          {doc.commercialFields.map((cf) => (
+            <Text key={cf.id} style={styles.bullet}>
+              • {cf.label}
+              {cf.required ? ' (required)' : ''}
             </Text>
           ))}
         </View>
-      )}
 
-      {/* Evaluation Criteria */}
-      {data.evaluationCriteria && data.evaluationCriteria.length > 0 && (
+        {/* 3. Quality questionnaire */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Evaluation Criteria</Text>
-          {data.evaluationCriteria.map((criteria, index) => (
-            <Text key={index} style={styles.text}>
-              • {criteria}
+          <Text style={styles.sectionTitle}>3. Quality questionnaire</Text>
+          {doc.questionnaire.length > 0 && (
+            <View style={[styles.qRow, styles.headerRow]}>
+              <Text style={styles.qCol}>Question</Text>
+              <Text style={styles.qResp}>Vendor response</Text>
+            </View>
+          )}
+          {doc.questionnaire.map((q) => (
+            <View key={q.id} style={styles.qRow} wrap={false}>
+              <Text style={styles.qCol}>
+                {q.question}
+                {q.required ? ' *' : ''}
+              </Text>
+              <Text style={styles.qResp}>{RESP_LABEL[q.responseType] ?? ''}</Text>
+            </View>
+          ))}
+          {doc.questionnaire.length === 0 && (
+            <Text style={styles.bullet}>No questionnaire questions.</Text>
+          )}
+          <Text style={styles.note}>
+            Supporting documents: {doc.supportingDocsNote}
+          </Text>
+        </View>
+
+        {/* 4. Terms & conditions */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>4. Terms &amp; conditions</Text>
+          {doc.termsAndConditions.map((t, i) => (
+            <Text key={i} style={styles.bullet}>
+              • {t}
             </Text>
           ))}
         </View>
-      )}
 
-      {/* Terms and Conditions */}
-      {data.termsAndConditions && data.termsAndConditions.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Terms and Conditions</Text>
-          {data.termsAndConditions.map((term, index) => (
-            <Text key={index} style={styles.text}>
-              {index + 1}. {term}
-            </Text>
-          ))}
-        </View>
-      )}
-
-      {/* Footer */}
-      <Text style={styles.footer}>
-        This is an official Request for Quotation. Please submit your quote through the provided form link.
-      </Text>
-    </Page>
-  </Document>
-);
+        <Text style={styles.footer} fixed>
+          This is an official Request for Quotation. Please submit your quote through the provided form link.
+        </Text>
+      </Page>
+    </Document>
+  );
+};

@@ -1,0 +1,218 @@
+// The canonical structured RFQ document. Both the PDF renderer and the
+// single-column form builder render this shape, and every "update" from the
+// create-RFQ chat regenerates it. See MASTER_SPEC.md §2 step 1 + Appendix A.
+
+export interface RFQHeader {
+  buyer: string;
+  rfqId: string;
+  quoteDeadline: string;      // free text or ISO date
+  expectedDelivery: string;
+  currency: string;
+  validity: string;
+}
+
+export interface RFQLineItemDoc {
+  id: string;
+  line: number;               // 1-based display index
+  item: string;
+  specification: string;
+  quantity: number;
+  unit: string;
+}
+
+// A field the vendor must supply for every line item (section 2).
+export interface CommercialField {
+  id: string;
+  label: string;
+  type: 'text' | 'number' | 'select';
+  options?: string[];
+  required: boolean;
+}
+
+export interface QuestionnaireItem {
+  id: string;
+  question: string;
+  responseType: 'yesno' | 'text' | 'file';
+  required: boolean;
+}
+
+export interface RFQDocument {
+  header: RFQHeader;
+  lineItems: RFQLineItemDoc[];
+  commercialFields: CommercialField[];   // section 2 — per line item
+  questionnaire: QuestionnaireItem[];    // section 3
+  supportingDocsNote: string;            // section 3 upload ask
+  termsAndConditions: string[];          // section 4
+}
+
+let seq = 0;
+function rid(prefix: string): string {
+  seq += 1;
+  return `${prefix}_${seq.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** The commercial fields every RFQ asks for by default (MASTER_SPEC §2.2). */
+export function defaultCommercialFields(): CommercialField[] {
+  return [
+    { id: rid('cf'), label: 'Unit price', type: 'number', required: true },
+    { id: rid('cf'), label: 'Currency', type: 'text', required: true },
+    { id: rid('cf'), label: 'Unit of measurement', type: 'text', required: true },
+    { id: rid('cf'), label: 'MOQ', type: 'number', required: false },
+    { id: rid('cf'), label: 'Lead time', type: 'text', required: true },
+    { id: rid('cf'), label: 'Applicable taxes', type: 'text', required: false },
+    { id: rid('cf'), label: 'Freight/transport charges', type: 'text', required: false },
+    { id: rid('cf'), label: 'Discount, if any', type: 'text', required: false },
+  ];
+}
+
+export function defaultTerms(): string[] {
+  return [
+    'Delivery location',
+    'Payment terms',
+    'Quote validity',
+    'Delivery commitment',
+    'Warranty/replacement terms',
+    'Taxes and freight treatment',
+    'Penalties, if applicable',
+  ];
+}
+
+/** A blank document for a freshly-created draft RFQ (no "update" run yet). */
+export function emptyRFQDocument(rfqId: string, buyer: string): RFQDocument {
+  return {
+    header: {
+      buyer,
+      rfqId,
+      quoteDeadline: '',
+      expectedDelivery: '',
+      currency: 'INR',
+      validity: 'Quote valid for 90 days',
+    },
+    lineItems: [],
+    commercialFields: defaultCommercialFields(),
+    questionnaire: [],
+    supportingDocsNote: 'Upload certificates / relevant documents.',
+    termsAndConditions: defaultTerms(),
+  };
+}
+
+export function newLineItem(line: number): RFQLineItemDoc {
+  return { id: rid('li'), line, item: '', specification: '', quantity: 1, unit: 'pcs' };
+}
+
+export function newCommercialField(): CommercialField {
+  return { id: rid('cf'), label: 'New field', type: 'text', required: false };
+}
+
+export function newQuestion(): QuestionnaireItem {
+  return { id: rid('q'), question: 'New question', responseType: 'yesno', required: false };
+}
+
+/** Renumber line items 1..n after add/delete/reorder. */
+export function renumber(items: RFQLineItemDoc[]): RFQLineItemDoc[] {
+  return items.map((li, i) => ({ ...li, line: i + 1 }));
+}
+
+/**
+ * Coerce whatever the drafting agent returned (or a legacy generatedContent
+ * blob) into a valid RFQDocument, filling gaps with defaults.
+ */
+export function normalizeRFQDocument(
+  raw: unknown,
+  fallback: { rfqId: string; buyer: string }
+): RFQDocument {
+  const base = emptyRFQDocument(fallback.rfqId, fallback.buyer);
+  if (!raw || typeof raw !== 'object') return base;
+  const r = raw as Record<string, any>;
+
+  const header = { ...base.header, ...(r.header ?? {}) };
+  header.rfqId = header.rfqId || fallback.rfqId;
+  header.buyer = header.buyer || fallback.buyer;
+
+  const lineItems: RFQLineItemDoc[] = Array.isArray(r.lineItems)
+    ? renumber(
+        r.lineItems.map((li: any) => ({
+          id: li.id || rid('li'),
+          line: 0,
+          item: String(li.item ?? li.itemDescription ?? ''),
+          specification: String(li.specification ?? ''),
+          quantity: Number(li.quantity ?? li.qty ?? 1) || 1,
+          unit: String(li.unit ?? 'pcs'),
+        }))
+      )
+    : [];
+
+  const commercialFields: CommercialField[] = Array.isArray(r.commercialFields) && r.commercialFields.length
+    ? r.commercialFields.map((cf: any) => ({
+        id: cf.id || rid('cf'),
+        label: String(cf.label ?? 'Field'),
+        type: ['text', 'number', 'select'].includes(cf.type) ? cf.type : 'text',
+        options: Array.isArray(cf.options) ? cf.options.map(String) : undefined,
+        required: Boolean(cf.required),
+      }))
+    : base.commercialFields;
+
+  const questionnaire: QuestionnaireItem[] = Array.isArray(r.questionnaire)
+    ? r.questionnaire.map((q: any) => ({
+        id: q.id || rid('q'),
+        question: String(q.question ?? q.label ?? ''),
+        responseType: ['yesno', 'text', 'file'].includes(q.responseType)
+          ? q.responseType
+          : 'yesno',
+        required: Boolean(q.required),
+      }))
+    : [];
+
+  const termsAndConditions: string[] = Array.isArray(r.termsAndConditions) && r.termsAndConditions.length
+    ? r.termsAndConditions.map(String)
+    : base.termsAndConditions;
+
+  return {
+    header,
+    lineItems,
+    commercialFields,
+    questionnaire,
+    supportingDocsNote: String(r.supportingDocsNote ?? base.supportingDocsNote),
+    termsAndConditions,
+  };
+}
+
+/** Plain-text rendering used for email summaries and as agent input. */
+export function rfqDocumentToText(doc: RFQDocument): string {
+  const parts: string[] = [];
+  const h = doc.header;
+  parts.push(`RFQ: ${h.buyer || ''} — ${h.rfqId}`);
+  if (h.quoteDeadline) parts.push(`Quote deadline: ${h.quoteDeadline}`);
+  if (h.expectedDelivery) parts.push(`Expected delivery: ${h.expectedDelivery}`);
+  if (h.currency) parts.push(`Currency: ${h.currency}`);
+  if (h.validity) parts.push(`Validity: ${h.validity}`);
+
+  if (doc.lineItems.length) {
+    parts.push('\nLine items:');
+    doc.lineItems.forEach((li) =>
+      parts.push(`  ${li.line}. ${li.item} — ${li.specification} — ${li.quantity} ${li.unit}`)
+    );
+  }
+  if (doc.commercialFields.length) {
+    parts.push(
+      '\nCommercial information requested per line item: ' +
+        doc.commercialFields.map((c) => c.label).join(', ')
+    );
+  }
+  if (doc.questionnaire.length) {
+    parts.push('\nQuality questionnaire:');
+    doc.questionnaire.forEach((q) => parts.push(`  - ${q.question}`));
+  }
+  if (doc.termsAndConditions.length) {
+    parts.push('\nTerms & conditions:');
+    doc.termsAndConditions.forEach((t) => parts.push(`  - ${t}`));
+  }
+  return parts.join('\n');
+}
+
+/** Short description for RFQ list / email teaser. */
+export function rfqDocumentTitle(doc: RFQDocument): string {
+  const first = doc.lineItems[0]?.item;
+  if (first) return `RFQ: ${first}${doc.lineItems.length > 1 ? ` +${doc.lineItems.length - 1} more` : ''}`;
+  return 'Untitled RFQ';
+}
