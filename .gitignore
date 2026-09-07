@@ -72,3 +72,6 @@ TECHNICAL_ANALYSIS_AND_QUESTIONS.md
 # Only track rfq-system/ directory
 .vercel
 .env*
+
+# Claude Code agent worktrees (each has its own .git)
+.claude/worktrees/
