@@ -12,6 +12,7 @@ import {
 import { RFQDraftingAgent, type RFQThreadEntry } from '@/lib/agents/rfq-drafting';
 import { applyRFQDocument } from '@/lib/rfq-persist';
 import { normalizeRFQDocument, type RFQDocument } from '@/lib/rfq-document';
+import { sanitizeText } from '@/lib/doc-extract';
 
 /**
  * The create-RFQ conversation.
@@ -69,7 +70,7 @@ export async function POST(
       message?: string;
       action?: 'message' | 'update';
     };
-    const text = (message ?? '').trim();
+    const text = sanitizeText(message ?? '');
 
     if (action !== 'update' && !text) {
       return badRequest('message is required');

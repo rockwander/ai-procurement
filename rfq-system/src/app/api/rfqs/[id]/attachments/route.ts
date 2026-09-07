@@ -9,7 +9,7 @@ import {
   badRequest,
   serverError,
 } from '@/lib/api';
-import { extractText, isSupportedDoc, SUPPORTED_DOC_EXTENSIONS } from '@/lib/doc-extract';
+import { extractText, isSupportedDoc, SUPPORTED_DOC_EXTENSIONS, sanitizeText } from '@/lib/doc-extract';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -57,7 +57,7 @@ export async function POST(
     } else {
       const body = await request.json();
       name = String(body.name || 'pasted-content.txt');
-      text = String(body.text || '').trim();
+      text = sanitizeText(String(body.text || ''));
     }
 
     if (!text) return badRequest('No text could be extracted from the document');
