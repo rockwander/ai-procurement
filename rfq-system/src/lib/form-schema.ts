@@ -36,17 +36,6 @@ export interface FormSchema {
   fields: FormField[];
 }
 
-export const FIELD_TYPES: FieldType[] = [
-  'text',
-  'number',
-  'email',
-  'tel',
-  'textarea',
-  'select',
-  'date',
-  'file',
-];
-
 export function emptySchema(): FormSchema {
   return {
     sections: [{ id: 'default', title: 'Quote Details', orderIndex: 0 }],
@@ -54,23 +43,8 @@ export function emptySchema(): FormSchema {
   };
 }
 
-export function newField(orderIndex: number): FormField {
-  return {
-    id: `field_${Math.random().toString(36).slice(2, 9)}`,
-    type: 'text',
-    label: 'New Field',
-    required: false,
-    orderIndex,
-  };
-}
-
 export function sortedFields(schema: FormSchema): FormField[] {
   return [...schema.fields].sort((a, b) => a.orderIndex - b.orderIndex);
-}
-
-/** Reindex fields 0..n after a reorder so orderIndex stays contiguous. */
-export function reindex(fields: FormField[]): FormField[] {
-  return fields.map((f, i) => ({ ...f, orderIndex: i }));
 }
 
 // ---------------------------------------------------------------------------

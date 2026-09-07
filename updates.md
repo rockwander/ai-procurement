@@ -21,6 +21,27 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-07 — Form builder must define the form, not fill it
+**Refinement:** The create-RFQ "Form builder" view is for the buyer to
+**define the metadata and layout of the supplier response form** — which
+fields suppliers must answer and with what control — **not** to enter quote
+data. Suppliers receive this form by email (with a copy of the RFQ PDF for
+reference/internal sharing) and fill it in themselves.
+- Each commercial field / questionnaire item is shown as a design row:
+  editable field **name** (label), response **type**, **Required** toggle,
+  reorder, delete — plus a **greyed preview** of the exact control the
+  supplier will see (text box, number box, choice dropdown, Yes/No, file
+  upload).
+- `select`/choice fields get an inline **options editor**.
+- Each section carries a one-line description of who answers it and when
+  (per line item vs once per quote); a banner states the form is emailed to
+  suppliers alongside the PDF.
+- The Drafting Agent must never emit a commercial field or question with a
+  blank name; blank-named entries are dropped on normalization.
+
+**Affects:** MASTER_SPEC §2 step 1 (Create RFQ — form builder); Drafting Agent.
+**Status:** implemented
+
 ## 2026-09-07 — Conversational RFQ creation with synced PDF + form builder
 **Refinement:** Creating an RFQ becomes a chat-driven refinement loop:
 - Buyer attaches **multiple documents** (business requirements, policy, etc.)

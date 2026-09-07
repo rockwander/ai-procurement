@@ -126,9 +126,11 @@ Rules:
   quantities and units. Dozens of rows are fine.
 - commercialFields: the fields a vendor must fill FOR EACH line item. Default to
   unit price, currency, unit of measurement, MOQ, lead time, applicable taxes,
-  freight/transport charges, discount — adjust to the buyer's needs.
-- questionnaire: quality / capability questions. responseType is "yesno",
-  "text", or "file".
+  freight/transport charges, discount — adjust to the buyer's needs. Every entry
+  MUST have a non-empty "label" (a short human field name); never emit a field
+  with a blank label. For type "select", include an "options" array.
+- questionnaire: quality / capability questions. Every entry MUST have a
+  non-empty "question". responseType is "yesno", "text", or "file".
 - termsAndConditions: a list of short strings.
 - Do not invent facts the thread doesn't support; leave a header field as ""
   if unknown.

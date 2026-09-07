@@ -63,13 +63,20 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
    See **Appendix A** for a full worked example of the RFQ document.
 
    - **Form builder (single column)** operates on the same RFQ the PDF
-     renders. It exposes every section as editable groups:
+     renders. It **defines the supplier response form** (field names, types,
+     which are mandatory, order) — it is not for entering quote data.
+     Suppliers receive this form by email with a copy of the PDF for
+     reference. It exposes every section as editable groups:
      - **Line items** — add / delete / reorder rows; edit item,
        specification, qty, unit.
      - **Commercial information requested** — the per-line-item fields
-       vendors must fill; add / delete / reorder / rename, toggle mandatory.
+       vendors must fill; add / delete / reorder / rename, set type
+       (text / number / choice, with an options editor for choice), toggle
+       mandatory. Each field shows a greyed preview of the control the
+       supplier will see.
      - **Quality questionnaire** — add / delete / reorder / edit questions,
-       set response type (Yes-No / free text / file), toggle mandatory.
+       set response type (Yes-No / free text / file), toggle mandatory, with
+       the same supplier-facing preview.
      - **Header** and **Terms & conditions** — editable text.
    - **Direct edits in the form builder apply immediately** to the RFQ and
      re-render the PDF — no AI call. The chat **"update"** is only for AI
@@ -155,6 +162,26 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
+
+### 2026-09-07 — Form builder must define the form, not fill it
+
+**Refinement:** The create-RFQ "Form builder" view defines the **metadata and
+layout of the supplier response form** — which fields suppliers must answer
+and with what control — it is **not** a form for entering quote data.
+Suppliers receive this form by email (with a copy of the RFQ PDF for
+reference / internal sharing) and fill it in themselves.
+- Each commercial field / questionnaire item renders as a design row:
+  editable field **name**, response **type**, **Required** toggle, reorder,
+  delete — plus a **greyed preview** of the exact control the supplier will
+  see (text / number / choice dropdown / Yes-No / file upload).
+- `select` / choice fields expose an inline **options editor**.
+- Each section shows a one-line description of who answers it and when (per
+  line item vs once per quote); a banner states the form is emailed to
+  suppliers with the PDF.
+- The Drafting Agent must never emit a commercial field or question with a
+  blank name; blank-named entries are dropped during `normalizeRFQDocument`.
+
+**Affects:** Core Workflow step 1 (Create RFQ — form builder); Drafting Agent.
 
 ### 2026-09-07 — Conversational RFQ creation with synced PDF + form builder
 

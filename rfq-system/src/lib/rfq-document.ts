@@ -142,25 +142,32 @@ export function normalizeRFQDocument(
       )
     : [];
 
-  const commercialFields: CommercialField[] = Array.isArray(r.commercialFields) && r.commercialFields.length
-    ? r.commercialFields.map((cf: any) => ({
-        id: cf.id || rid('cf'),
-        label: String(cf.label ?? 'Field'),
-        type: ['text', 'number', 'select'].includes(cf.type) ? cf.type : 'text',
-        options: Array.isArray(cf.options) ? cf.options.map(String) : undefined,
-        required: Boolean(cf.required),
-      }))
-    : base.commercialFields;
+  const rawCF: CommercialField[] = Array.isArray(r.commercialFields)
+    ? r.commercialFields
+        .map((cf: any) => ({
+          id: cf.id || rid('cf'),
+          label: String(cf.label ?? cf.name ?? '').trim(),
+          type: ['text', 'number', 'select'].includes(cf.type) ? cf.type : 'text',
+          options: Array.isArray(cf.options) ? cf.options.map(String) : undefined,
+          required: Boolean(cf.required),
+        }))
+        // Drop fields the agent returned without a name — an unlabelled field is
+        // not something a supplier can answer.
+        .filter((cf: CommercialField) => cf.label.length > 0)
+    : [];
+  const commercialFields: CommercialField[] = rawCF.length ? rawCF : base.commercialFields;
 
   const questionnaire: QuestionnaireItem[] = Array.isArray(r.questionnaire)
-    ? r.questionnaire.map((q: any) => ({
-        id: q.id || rid('q'),
-        question: String(q.question ?? q.label ?? ''),
-        responseType: ['yesno', 'text', 'file'].includes(q.responseType)
-          ? q.responseType
-          : 'yesno',
-        required: Boolean(q.required),
-      }))
+    ? r.questionnaire
+        .map((q: any) => ({
+          id: q.id || rid('q'),
+          question: String(q.question ?? q.label ?? '').trim(),
+          responseType: ['yesno', 'text', 'file'].includes(q.responseType)
+            ? q.responseType
+            : 'yesno',
+          required: Boolean(q.required),
+        }))
+        .filter((q: QuestionnaireItem) => q.question.length > 0)
     : [];
 
   const termsAndConditions: string[] = Array.isArray(r.termsAndConditions) && r.termsAndConditions.length
