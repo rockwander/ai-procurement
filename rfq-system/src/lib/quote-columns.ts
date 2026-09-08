@@ -1,4 +1,10 @@
 import type { FormSchema } from '@/lib/form-schema';
+import {
+  normaliseLineResponse,
+  normaliseLinePrice,
+  committedQty,
+  type RFQLineForResponse,
+} from '@/lib/line-response';
 
 export interface QuoteRow {
   invitationId: string;
@@ -11,6 +17,52 @@ export interface QuoteRow {
   submittedAt: string | null;
   formData: Record<string, unknown>;
   lineItems: Array<Record<string, unknown>>;
+}
+
+export interface LineCoverage {
+  priced: number;
+  partial: number;
+  noBid: number;
+  total: number;
+  foreignCurrency: number;
+  ambiguousUom: number;
+}
+
+/** Per-row summary of how completely and cleanly the supplier answered. */
+export function lineCoverage(
+  row: QuoteRow,
+  rfqLines: Array<{ id: string; itemDescription: string; quantity: number; unit: string }>,
+  rfqCurrency: string
+): LineCoverage {
+  const byId = new Map(row.lineItems.map((li) => [String(li.itemId), li]));
+  const cov: LineCoverage = {
+    priced: 0,
+    partial: 0,
+    noBid: 0,
+    total: rfqLines.length,
+    foreignCurrency: 0,
+    ambiguousUom: 0,
+  };
+  for (const line of rfqLines) {
+    const raw = byId.get(line.id);
+    const r = normaliseLineResponse(
+      raw,
+      { id: line.id, itemDescription: line.itemDescription, quantity: line.quantity, unit: line.unit },
+      rfqCurrency
+    );
+    if (r.canSupply === 'no') {
+      cov.noBid++;
+      continue;
+    }
+    if (r.canSupply === 'partial' || committedQty(r, line.quantity) < line.quantity) {
+      cov.partial++;
+    }
+    const norm = normaliseLinePrice(r, rfqCurrency);
+    if (r.unitPrice != null && r.unitPrice > 0) cov.priced++;
+    if (norm.currencyDiffers && r.unitPrice != null) cov.foreignCurrency++;
+    if (norm.uomAmbiguous) cov.ambiguousUom++;
+  }
+  return cov;
 }
 
 export interface ColumnDef {
@@ -29,8 +81,16 @@ export interface ColumnDef {
  */
 export function buildColumns(
   formSchema: FormSchema | null,
-  lineItems: Array<{ id: string; itemDescription: string }>
+  lineItems: Array<{ id: string; itemDescription: string; quantity?: number; unit?: string }>,
+  rfqCurrency = 'INR'
 ): ColumnDef[] {
+  const rfqLines = lineItems.map((li) => ({
+    id: li.id,
+    itemDescription: li.itemDescription,
+    quantity: li.quantity ?? 0,
+    unit: li.unit ?? '',
+  }));
+
   const cols: ColumnDef[] = [
     {
       key: 'supplierName',
@@ -47,8 +107,36 @@ export function buildColumns(
       numeric: false,
     },
     {
+      key: 'coverage',
+      label: 'Lines priced',
+      group: 'parent',
+      numeric: true,
+      accessor: (r) => lineCoverage(r, rfqLines, rfqCurrency).priced,
+    },
+    {
+      key: 'partialLines',
+      label: 'Partial / no-bid',
+      group: 'parent',
+      numeric: false,
+      accessor: (r) => {
+        const c = lineCoverage(r, rfqLines, rfqCurrency);
+        if (c.partial === 0 && c.noBid === 0) return '—';
+        return `${c.partial} partial, ${c.noBid} no-bid`;
+      },
+    },
+    {
+      key: 'currencyFlag',
+      label: 'FX',
+      group: 'parent',
+      numeric: false,
+      accessor: (r) => {
+        const c = lineCoverage(r, rfqLines, rfqCurrency);
+        return c.foreignCurrency > 0 ? `${c.foreignCurrency} line(s) non-${rfqCurrency}` : '—';
+      },
+    },
+    {
       key: 'totalAmount',
-      label: 'Total ($)',
+      label: `Total (${rfqCurrency}, comparable lines)`,
       group: 'parent',
       accessor: (r) => r.totalAmount,
       numeric: true,
@@ -77,16 +165,42 @@ export function buildColumns(
   }
 
   for (const li of lineItems) {
+    const line: RFQLineForResponse = {
+      id: li.id,
+      itemDescription: li.itemDescription,
+      quantity: li.quantity ?? 0,
+      unit: li.unit ?? '',
+    };
+    // Normalised unit price (per the RFQ's asked unit, quoted currency).
     cols.push({
       key: `li:${li.id}`,
-      label: `${li.itemDescription} — unit $`,
+      label: `${li.itemDescription} — unit price`,
       group: 'lineitem',
       numeric: true,
       accessor: (r) => {
-        const match = (r.lineItems ?? []).find(
-          (x) => String(x.itemId) === li.id
-        );
-        return match ? Number(match.unitPrice) : null;
+        const match = (r.lineItems ?? []).find((x) => String(x.itemId) === li.id);
+        if (!match) return null;
+        const resp = normaliseLineResponse(match, line, rfqCurrency);
+        if (resp.canSupply === 'no') return null;
+        return normaliseLinePrice(resp, rfqCurrency).pricePerAskedUnit;
+      },
+    });
+    // Can-supply status for this line.
+    cols.push({
+      key: `lis:${li.id}`,
+      label: `${li.itemDescription} — can supply`,
+      group: 'lineitem',
+      numeric: false,
+      accessor: (r) => {
+        const match = (r.lineItems ?? []).find((x) => String(x.itemId) === li.id);
+        if (!match) return null;
+        const resp = normaliseLineResponse(match, line, rfqCurrency);
+        if (resp.canSupply === 'no') return 'no-bid';
+        const qty = committedQty(resp, line.quantity);
+        if (resp.canSupply === 'partial' || qty < line.quantity) {
+          return `partial (${qty.toLocaleString()}/${line.quantity.toLocaleString()})`;
+        }
+        return 'full';
       },
     });
   }

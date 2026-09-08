@@ -21,6 +21,55 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-09 — Per-line supplier response is a fixed schema, not buyer-defined
+**Refinement:** The fields a supplier fills **for each line item** are a fixed,
+typed structure — the same on every RFQ — not something the buyer defines,
+renames, or deletes in the form builder. This is what lets the quote-comparison
+and NL-analysis agents reason over the responses structurally (normalise
+currency/UoM, spot partial coverage) instead of guessing at free-form fields.
+
+Per line item, every supplier answers:
+- **Can supply?** — `full` / `partial` / `no` (explicit; a blank price no
+  longer has to mean "declined")
+- **Unit price** — number (blank if not quoting the line)
+- **Quoted currency** — defaults to the RFQ currency; supplier can override
+  per line (captures the "quoted in USD" case)
+- **Quoted unit of measure** — e.g. *per piece*, *per 100*, *per box*, *per kg*
+  (captures the "per box vs per 100 pieces" case; the agent normalises to the
+  RFQ's asked unit)
+- **Quantity they can supply** — number, defaults to the asked qty (captures
+  "can only do 18k of the 22k asked")
+- **Lead time (days)** — number
+- **MOQ** — number, optional
+
+**Form ≠ PDF.** The supplier response form is now a **superset** of the RFQ
+document, not a 1:1 mirror of it. "Can you supply this item / this quantity"
+belongs only in the form — it is a bid-capture concept, not something the buyer
+states in the RFQ. The PDF's "Commercial information requested" section becomes
+a **generated description** of this fixed grid; the form builder shows the grid
+**read-only** (with a couple of optional-toggle rows), and drops
+add/rename/delete of per-line commercial fields.
+
+**What the buyer still defines freely:** the quality questionnaire, the header,
+terms & conditions, and (new) any **quote-level** commercial fields answered
+once for the whole quote (e.g. tooling charges, rebate tiers).
+
+**Affects:** MASTER_SPEC §2 step 1 (Create RFQ — form builder, RFQ document
+structure §2), §4 (Quote comparison), §3 (Supplier flow); Drafting Agent
+(stops emitting per-line commercial fields); Autofill Agent (targets the fixed
+grid, per-cell confidence); `rfqDocumentToFormSchema`; supplier quote form;
+comparison table columns; DB `quote_submissions.line_items` shape.
+**Status:** in spec
+
+**Design decisions (product owner):**
+- Per-line response fields are fixed and typed; buyer customisation moves to
+  the questionnaire and to new quote-level commercial fields.
+- `canSupply` is explicit (`full`/`partial`/`no`), so the comparison never has
+  to infer intent from a missing price.
+- Currency and UoM are captured **per line**, defaulting to the RFQ's values.
+- The form is a superset of the PDF; they are no longer two renderings of one
+  identical structure.
+
 ## 2026-09-08 — Create RFQ opens straight into the chat (no policy picker)
 **Refinement:** Clicking "Create RFQ" should redirect directly to the
 create-RFQ chat page. The general-policy checkboxes that used to gate it are

@@ -9,9 +9,15 @@ export interface QuoteEvaluationInput {
     lineItems: Array<{
       itemId: string;
       itemDescription: string;
-      quantity: number;
-      unitPrice: number;
+      quantity: number; // quantity this supplier can actually supply
+      askedQuantity?: number;
+      unitPrice: number; // normalised to the RFQ's asked unit
       totalPrice: number;
+      currency?: string;
+      currencyDiffersFromRfq?: boolean;
+      uomAmbiguous?: boolean;
+      partial?: boolean;
+      leadTimeDays?: number;
     }>;
     totalAmount: number;
     deliveryDays?: number;
@@ -182,9 +188,22 @@ Important:
       if (quote.deliveryDays) {
         message += `Delivery: ${quote.deliveryDays} days\n`;
       }
-      message += `Line Items:\n`;
+      message += `Line Items (only lines this supplier can supply are listed; unit prices are normalised to the RFQ's asked unit):\n`;
       quote.lineItems.forEach((item) => {
-        message += `  - itemId="${item.itemId}" | ${item.itemDescription}: ${item.quantity} × $${item.unitPrice.toFixed(2)} = $${item.totalPrice.toFixed(2)}\n`;
+        const flags: string[] = [];
+        if (item.partial) {
+          flags.push(
+            `PARTIAL — can supply ${item.quantity} of ${item.askedQuantity ?? item.quantity} asked`
+          );
+        }
+        if (item.currencyDiffersFromRfq) {
+          flags.push(`quoted in ${item.currency} (NOT the RFQ currency — not FX-converted)`);
+        }
+        if (item.uomAmbiguous) flags.push('unit of measure ambiguous (pack size unknown)');
+        if (item.leadTimeDays != null) flags.push(`lead time ${item.leadTimeDays}d`);
+        message += `  - itemId="${item.itemId}" | ${item.itemDescription}: ${item.quantity} × ${item.unitPrice.toFixed(2)} = ${item.totalPrice.toFixed(2)}`;
+        if (flags.length) message += `  [${flags.join('; ')}]`;
+        message += `\n`;
       });
       if (quote.notes) {
         message += `Notes: ${quote.notes}\n`;
@@ -193,7 +212,10 @@ Important:
     });
 
     message += `\nApply the strategy and return the award decisions as JSON. `;
-    message += `Every RFQ line item (by its exact itemId) must appear in exactly one award. `;
+    message += `A supplier can only be awarded a line it actually quoted (listed above). `;
+    message += `If a supplier's quantity for a line is PARTIAL, you may split that line across suppliers to cover the full asked quantity. `;
+    message += `Do not compare or add prices across different currencies — call out any line quoted in a non-RFQ currency in your reasoning. `;
+    message += `Every RFQ line item (by its exact itemId) should be awarded (split allowed); if no supplier can cover a line, say so in warnings. `;
     message += `Use the exact supplierId and itemId strings given above.`;
 
     return message;
@@ -223,13 +245,30 @@ Important:
       award.lineItems.forEach((item) => awardedItemIds.add(item.itemId))
     );
 
+    // A line can legitimately be unawardable now — no supplier quoted it, or
+    // none could cover the quantity. Surface it as a warning, don't hard-fail.
+    const quotableItemIds = new Set<string>();
+    input.quotes.forEach((q) =>
+      q.lineItems.forEach((li) => quotableItemIds.add(li.itemId))
+    );
     const missing = input.rfqLineItems.filter((li) => !awardedItemIds.has(li.id));
     if (missing.length > 0) {
-      throw new Error(
-        `The strategy left ${missing.length} line item(s) unawarded: ` +
-          missing.map((li) => li.itemDescription).join(', ') +
-          '. Try rephrasing the strategy.'
-      );
+      const trulyUnquoted = missing.filter((li) => !quotableItemIds.has(li.id));
+      const droppedButQuoted = missing.filter((li) => quotableItemIds.has(li.id));
+      output.warnings = output.warnings ?? [];
+      if (trulyUnquoted.length > 0) {
+        output.warnings.push(
+          `${trulyUnquoted.length} line item(s) had no valid supplier quote and could not be awarded: ` +
+            trulyUnquoted.map((li) => li.itemDescription).join(', ') + '.'
+        );
+      }
+      if (droppedButQuoted.length > 0) {
+        output.warnings.push(
+          `The strategy did not award ${droppedButQuoted.length} line item(s) that were quoted: ` +
+            droppedButQuoted.map((li) => li.itemDescription).join(', ') +
+            '. Rephrase the strategy if they should be included.'
+        );
+      }
     }
 
     // Recalculate totals from line items to guarantee consistency.

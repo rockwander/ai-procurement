@@ -202,6 +202,46 @@ recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
 
+### 2026-09-09 — Per-line supplier response is a fixed schema, not buyer-defined
+
+**Refinement:** The fields a supplier fills **for each line item** are a fixed,
+typed structure, identical on every RFQ — not buyer-defined. This gives the
+quote-comparison and NL-analysis agents typed data to reason over (normalise
+currency / UoM, detect partial coverage) rather than free-form fields to guess
+at.
+
+Per line item, every supplier answers: **Can supply?** (`full` / `partial` /
+`no`), **Unit price** (number, blank if not quoting), **Quoted currency**
+(defaults to RFQ currency, overridable per line), **Quoted unit of measure**
+(e.g. *per piece* / *per 100* / *per box* / *per kg*; normalised to the RFQ's
+asked unit), **Quantity they can supply** (defaults to asked qty), **Lead time
+(days)**, **MOQ** (optional).
+
+**The form is a superset of the PDF, not a mirror.** "Can you supply this item /
+this quantity" is a bid-capture concept and lives only in the form. The PDF's
+§2 "Commercial information requested" becomes a generated description of this
+fixed grid. The form builder shows the grid read-only (plus optional-toggle
+rows) and no longer allows add / rename / delete of per-line commercial fields.
+
+**Buyer still defines freely:** the quality questionnaire, header, terms, and
+new **quote-level** commercial fields answered once per quote (tooling charges,
+rebate tiers, …).
+
+**Affects:** Core Workflow step 1 (Create RFQ — form builder; RFQ document
+structure §2), step 4 (Quote comparison); §3 Supplier Flow; Drafting Agent
+(stops emitting per-line commercial fields); Autofill Agent (targets the fixed
+grid with per-cell confidence); `rfqDocumentToFormSchema`; supplier quote form;
+comparison columns; `quote_submissions.line_items` shape.
+
+**Design decisions (product owner):**
+- Per-line response fields are fixed and typed; buyer customisation moves to the
+  questionnaire and to quote-level commercial fields.
+- `canSupply` is explicit, so the comparison never infers intent from a blank.
+- Currency and UoM are captured per line, defaulting to the RFQ's values.
+- Form is a superset of the PDF; not two renderings of one identical structure.
+
+**Status:** in spec
+
 ### 2026-09-08 — Create RFQ opens straight into the chat (no policy picker)
 
 **Refinement:** Clicking **Create RFQ** redirects straight to the create-RFQ

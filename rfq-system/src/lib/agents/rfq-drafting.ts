@@ -114,8 +114,8 @@ Return ONLY a JSON object with this exact shape:
     { "item": "Carton Box A", "specification": "5-ply, 12x10x8 in", "quantity": 10000, "unit": "pcs" }
   ],
   "commercialFields": [
-    { "label": "Unit price", "type": "number", "required": true },
-    { "label": "Lead time", "type": "text", "required": true }
+    { "label": "Applicable taxes (GST %)", "type": "text", "required": true },
+    { "label": "Freight / transport charges", "type": "text", "required": true }
   ],
   "questionnaire": [
     { "question": "Do you have ISO 9001 certification?", "responseType": "yesno", "required": true }
@@ -127,11 +127,13 @@ Return ONLY a JSON object with this exact shape:
 Rules:
 - lineItems: extract every distinct item the buyer wants quoted, with realistic
   quantities and units. Dozens of rows are fine.
-- commercialFields: the fields a vendor must fill FOR EACH line item. Default to
-  unit price, currency, unit of measurement, MOQ, lead time, applicable taxes,
-  freight/transport charges, discount — adjust to the buyer's needs. Every entry
-  MUST have a non-empty "label" (a short human field name); never emit a field
-  with a blank label. For type "select", include an "options" array.
+- commercialFields: commercial fields the vendor answers ONCE for the whole
+  quote (e.g. applicable taxes / GST %, freight & transport charges, payment
+  terms offered, volume/rebate discount, one-time tooling/setup charges, price
+  validity). Do NOT put per-line-item fields here — unit price, currency, unit
+  of measure, MOQ, lead time and can-supply are captured by a fixed per-line
+  response grid the system adds automatically. Every entry MUST have a
+  non-empty "label"; for type "select", include an "options" array.
 - questionnaire: quality / capability questions. Every entry MUST have a
   non-empty "question". responseType is "yesno", "text", or "file".
 - termsAndConditions: a list of short strings.

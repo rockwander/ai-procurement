@@ -56,9 +56,16 @@ function lineItemDetail(items: RFQLineItemDoc[]): string[] {
 }
 
 function commercialDetail(fields: CommercialField[]): string[] {
-  return fields.map(
-    (f) => `${f.label} (${f.type}${f.required ? ', required' : ''})`
-  );
+  const lines = [
+    'Per line item (fixed): can-supply, unit price, currency, unit of measure, quantity available, lead time, MOQ.',
+  ];
+  if (fields.length) {
+    lines.push('Once per quote:');
+    fields.forEach((f) =>
+      lines.push(`  ${f.label} (${f.type}${f.required ? ', required' : ''})`)
+    );
+  }
+  return lines;
 }
 
 function questionnaireDetail(qs: QuestionnaireItem[]): string[] {
@@ -113,9 +120,9 @@ export function buildOutline(
     id: sid(),
     group: 'supplier',
     heading: 'Commercial information requested',
-    summary: `${doc.commercialFields.length} field(s) per line item`,
+    summary: `Fixed per-line grid${doc.commercialFields.length ? ` + ${doc.commercialFields.length} quote-level field(s)` : ''}`,
     detail: commercialDetail(doc.commercialFields),
-    ticked: wasTicked('commercialFields', 'Commercial information requested', doc.commercialFields.length > 0),
+    ticked: wasTicked('commercialFields', 'Commercial information requested', true),
     kind: 'commercialFields',
   });
   sections.push({

@@ -3,6 +3,13 @@
 import { useMemo } from 'react';
 import { FormSchema, FormField, sortedFields } from '@/lib/form-schema';
 import { Input, Textarea, Select } from '@/components/ui';
+import {
+  LineItemResponse,
+  RFQLineForResponse,
+  QUOTE_UOM_OPTIONS,
+  emptyLineResponse,
+  normaliseLinePrice,
+} from '@/lib/line-response';
 
 export interface LineItemInput {
   id: string;
@@ -13,19 +20,22 @@ export interface LineItemInput {
 
 export interface QuoteFormValue {
   formData: Record<string, unknown>;
-  lineItemPrices: Record<string, number>; // lineItemId -> unit price
+  // rfq line-item id -> the FIXED per-line response
+  lineResponses: Record<string, LineItemResponse>;
   notes: string;
 }
 
 /**
- * The supplier-facing quote form: line-item pricing table (from RFQ line items)
- * plus the buyer-configured questionnaire / commercial fields. `aiNotes` holds
- * the assistant's fuller answer for a field when it had to be shortened to fit
- * the control (e.g. a paragraph mapped to a Yes/No dropdown).
+ * The supplier-facing quote form: a fixed per-line response grid (can-supply,
+ * price, currency, UoM, available qty, lead time, MOQ) plus the buyer-configured
+ * quote-level commercial fields and quality questionnaire. `aiNotes` holds the
+ * assistant's fuller answer for a field when it had to be shortened to fit the
+ * control.
  */
 export function QuoteForm({
   schema,
   lineItems,
+  rfqCurrency,
   value,
   onChange,
   disabled,
@@ -33,6 +43,7 @@ export function QuoteForm({
 }: {
   schema: FormSchema;
   lineItems: LineItemInput[];
+  rfqCurrency: string;
   value: QuoteFormValue;
   onChange: (v: QuoteFormValue) => void;
   disabled?: boolean;
@@ -47,8 +58,22 @@ export function QuoteForm({
   function setField(id: string, v: unknown) {
     onChange({ ...value, formData: { ...value.formData, [id]: v } });
   }
-  function setPrice(id: string, v: number) {
-    onChange({ ...value, lineItemPrices: { ...value.lineItemPrices, [id]: v } });
+
+  function respFor(li: LineItemInput): LineItemResponse {
+    return (
+      value.lineResponses[li.id] ??
+      emptyLineResponse(li as RFQLineForResponse, rfqCurrency)
+    );
+  }
+  function patchResp(li: LineItemInput, patch: Partial<LineItemResponse>) {
+    const current = respFor(li);
+    onChange({
+      ...value,
+      lineResponses: {
+        ...value.lineResponses,
+        [li.id]: { ...current, ...patch, itemId: li.id },
+      },
+    });
   }
 
   const bySection = (sectionId: string | undefined) =>
@@ -61,44 +86,145 @@ export function QuoteForm({
 
   return (
     <div className="space-y-6">
-      {/* Line item pricing */}
+      {/* Fixed per-line response grid */}
       <div>
-        <h3 className="font-semibold text-gray-900 mb-2">Line item pricing</h3>
+        <h3 className="font-semibold text-gray-900 mb-1">Line items</h3>
+        <p className="text-xs text-gray-500 mb-2">
+          For every line, say whether you can supply it and at what price. Leave
+          the price blank on lines you are not quoting.
+        </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm border border-gray-200 rounded">
             <thead className="bg-gray-50">
               <tr className="text-left text-gray-500">
-                <th className="px-3 py-2">Item</th>
-                <th className="px-3 py-2 w-20">Qty</th>
-                <th className="px-3 py-2 w-20">Unit</th>
-                <th className="px-3 py-2 w-32">Unit price</th>
-                <th className="px-3 py-2 w-32">Line total</th>
+                <th className="px-2 py-2 min-w-[180px]">Item</th>
+                <th className="px-2 py-2 w-24">Asked</th>
+                <th className="px-2 py-2 w-32">Can supply?</th>
+                <th className="px-2 py-2 w-24">Unit price</th>
+                <th className="px-2 py-2 w-24">Currency</th>
+                <th className="px-2 py-2 w-32">Priced per</th>
+                <th className="px-2 py-2 w-24">Qty you can supply</th>
+                <th className="px-2 py-2 w-24">Lead days</th>
+                <th className="px-2 py-2 w-24">MOQ</th>
               </tr>
             </thead>
             <tbody>
               {lineItems.map((li) => {
-                const price = value.lineItemPrices[li.id] ?? 0;
+                const r = respFor(li);
+                const norm = normaliseLinePrice(r, rfqCurrency);
                 return (
-                  <tr key={li.id} className="border-t border-gray-100">
-                    <td className="px-3 py-2 text-gray-800">{li.itemDescription}</td>
-                    <td className="px-3 py-2 text-gray-600">
-                      {li.quantity.toLocaleString()}
+                  <tr key={li.id} className="border-t border-gray-100 align-top">
+                    <td className="px-2 py-2 text-gray-800">
+                      {li.itemDescription}
                     </td>
-                    <td className="px-3 py-2 text-gray-600">{li.unit}</td>
-                    <td className="px-3 py-2">
+                    <td className="px-2 py-2 text-gray-600 whitespace-nowrap">
+                      {li.quantity.toLocaleString()} {li.unit}
+                    </td>
+                    <td className="px-2 py-2">
+                      <Select
+                        value={r.canSupply}
+                        disabled={disabled}
+                        onChange={(e) =>
+                          patchResp(li, {
+                            canSupply: e.target.value as LineItemResponse['canSupply'],
+                          })
+                        }
+                      >
+                        <option value="full">Yes — full qty</option>
+                        <option value="partial">Partial</option>
+                        <option value="no">No</option>
+                      </Select>
+                    </td>
+                    <td className="px-2 py-2">
                       <Input
                         type="number"
                         min="0"
                         step="0.01"
-                        value={price || ''}
-                        disabled={disabled}
-                        onChange={(e) => setPrice(li.id, Number(e.target.value) || 0)}
+                        value={r.unitPrice ?? ''}
+                        disabled={disabled || r.canSupply === 'no'}
+                        onChange={(e) =>
+                          patchResp(li, {
+                            unitPrice:
+                              e.target.value === '' ? null : Number(e.target.value),
+                          })
+                        }
+                      />
+                      {norm.currencyDiffers && r.unitPrice != null && (
+                        <p className="text-[11px] text-amber-600 mt-0.5">
+                          quoted in {r.currency}
+                        </p>
+                      )}
+                      {norm.uomAmbiguous && (
+                        <p className="text-[11px] text-amber-600 mt-0.5">
+                          pack size unknown
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-2 py-2">
+                      <Input
+                        value={r.currency}
+                        disabled={disabled || r.canSupply === 'no'}
+                        onChange={(e) =>
+                          patchResp(li, { currency: e.target.value.toUpperCase() })
+                        }
                       />
                     </td>
-                    <td className="px-3 py-2 text-gray-700">
-                      {(price * li.quantity).toLocaleString(undefined, {
-                        maximumFractionDigits: 2,
-                      })}
+                    <td className="px-2 py-2">
+                      <Select
+                        value={r.quotedUom}
+                        disabled={disabled || r.canSupply === 'no'}
+                        onChange={(e) =>
+                          patchResp(li, { quotedUom: e.target.value })
+                        }
+                      >
+                        {QUOTE_UOM_OPTIONS.map((o) => (
+                          <option key={o} value={o}>
+                            {o}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                    <td className="px-2 py-2">
+                      <Input
+                        type="number"
+                        min="0"
+                        placeholder={li.quantity.toString()}
+                        value={r.availableQty ?? ''}
+                        disabled={disabled || r.canSupply === 'no'}
+                        onChange={(e) =>
+                          patchResp(li, {
+                            availableQty:
+                              e.target.value === '' ? null : Number(e.target.value),
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <Input
+                        type="number"
+                        min="0"
+                        value={r.leadTimeDays ?? ''}
+                        disabled={disabled || r.canSupply === 'no'}
+                        onChange={(e) =>
+                          patchResp(li, {
+                            leadTimeDays:
+                              e.target.value === '' ? null : Number(e.target.value),
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="px-2 py-2">
+                      <Input
+                        type="number"
+                        min="0"
+                        value={r.moq ?? ''}
+                        disabled={disabled || r.canSupply === 'no'}
+                        onChange={(e) =>
+                          patchResp(li, {
+                            moq: e.target.value === '' ? null : Number(e.target.value),
+                          })
+                        }
+                      />
                     </td>
                   </tr>
                 );
@@ -106,15 +232,10 @@ export function QuoteForm({
             </tbody>
           </table>
         </div>
-        {lineItems.some((li) => !value.lineItemPrices[li.id]) && (
-          <p className="text-xs text-amber-600 mt-1">
-            {lineItems.filter((li) => !value.lineItemPrices[li.id]).length} item(s)
-            still need a unit price.
-          </p>
-        )}
+        <LineCoverageHint lineItems={lineItems} value={value} rfqCurrency={rfqCurrency} />
       </div>
 
-      {/* Field sections */}
+      {/* Field sections (quote-level commercial + questionnaire) */}
       {sections.map((sec) => {
         const secFields = bySection(sec.id);
         if (secFields.length === 0) return null;
@@ -168,6 +289,39 @@ export function QuoteForm({
         />
       </div>
     </div>
+  );
+}
+
+function LineCoverageHint({
+  lineItems,
+  value,
+  rfqCurrency,
+}: {
+  lineItems: LineItemInput[];
+  value: QuoteFormValue;
+  rfqCurrency: string;
+}) {
+  const stats = useMemo(() => {
+    let quoted = 0;
+    let noBid = 0;
+    let partial = 0;
+    for (const li of lineItems) {
+      const r =
+        value.lineResponses[li.id] ??
+        emptyLineResponse(li as RFQLineForResponse, rfqCurrency);
+      if (r.canSupply === 'no') noBid++;
+      else if (r.canSupply === 'partial') partial++;
+      if (r.canSupply !== 'no' && r.unitPrice != null && r.unitPrice > 0) quoted++;
+    }
+    return { quoted, noBid, partial, total: lineItems.length };
+  }, [lineItems, value, rfqCurrency]);
+
+  return (
+    <p className="text-xs text-gray-500 mt-1">
+      Priced {stats.quoted} of {stats.total} lines
+      {stats.partial > 0 && ` · ${stats.partial} partial`}
+      {stats.noBid > 0 && ` · ${stats.noBid} no-bid`}.
+    </p>
   );
 }
 

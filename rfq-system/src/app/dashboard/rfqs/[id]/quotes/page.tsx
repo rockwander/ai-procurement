@@ -54,7 +54,7 @@ export default function QuoteComparisonPage() {
   const columns: ColumnDef[] = useMemo(
     () =>
       data
-        ? buildColumns(data.rfq.formSchema, data.lineItems)
+        ? buildColumns(data.rfq.formSchema, data.lineItems, data.rfq.currency)
         : [],
     [data]
   );

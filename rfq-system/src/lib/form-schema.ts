@@ -56,16 +56,23 @@ export function sortedFields(schema: FormSchema): FormField[] {
 
 import type { RFQDocument } from '@/lib/rfq-document';
 
-const COMMERCIAL_SECTION = 'commercial';
-const QUESTIONNAIRE_SECTION = 'questionnaire';
+export const COMMERCIAL_SECTION = 'commercial';
+export const QUESTIONNAIRE_SECTION = 'questionnaire';
 
+/**
+ * Derive the buyer-configurable part of the supplier response form: quote-level
+ * commercial fields + the quality questionnaire. The per-line-item response
+ * (price, currency, UoM, can-supply, available qty, lead time, MOQ) is a FIXED
+ * schema — see src/lib/line-response.ts — and is rendered directly by the quote
+ * form and comparison table, not listed here.
+ */
 export function rfqDocumentToFormSchema(doc: RFQDocument): FormSchema {
   const sections: FormSection[] = [
     {
       id: COMMERCIAL_SECTION,
-      title: 'Commercial information (per line item)',
+      title: 'Commercial information (once for the whole quote)',
       description:
-        'Provide these for each line item. Unit price is captured in the pricing table above.',
+        'Answer these once. Per-line pricing, currency, unit of measure and lead time are captured in the line-item table.',
       orderIndex: 0,
     },
     {
@@ -79,10 +86,20 @@ export function rfqDocumentToFormSchema(doc: RFQDocument): FormSchema {
   let order = 0;
 
   for (const cf of doc.commercialFields) {
-    // Unit price is captured per line in the pricing table, not as a single
-    // free field. Drop any commercial field that is essentially "unit price"
-    // (with or without qualifiers like "(ex-taxes)", ", INR", "/unit").
-    if (/^unit[\s-]*price\b/i.test(cf.label.trim()) || /\bprice per unit\b/i.test(cf.label)) {
+    // Per-line commercials are a fixed schema now; drop anything the drafting
+    // agent still emits that belongs there (unit price, currency, UoM, MOQ,
+    // lead time), so it doesn't show up as a stray quote-level field.
+    const l = cf.label.trim().toLowerCase();
+    if (
+      /^unit[\s-]*price\b/.test(l) ||
+      /\bprice per unit\b/.test(l) ||
+      /^currency\b/.test(l) ||
+      /^unit of (measure|measurement)\b/.test(l) ||
+      /^uom\b/.test(l) ||
+      /^moq\b/.test(l) ||
+      /^minimum order\b/.test(l) ||
+      /^lead[\s-]*time\b/.test(l)
+    ) {
       continue;
     }
     fields.push({

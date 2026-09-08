@@ -1,6 +1,6 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
-import type { RFQDocument } from '@/lib/rfq-document';
+import { type RFQDocument, PER_LINE_RESPONSE_ITEMS } from '@/lib/rfq-document';
 
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 10, fontFamily: 'Helvetica', lineHeight: 1.4 },
@@ -119,13 +119,25 @@ export const RFQPDFDocument: React.FC<{ data: RFQPDFProps }> = ({ data }) => {
         {/* 2. Commercial information requested */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>2. Commercial information requested</Text>
-          <Text style={styles.bullet}>For each line item, the vendor should provide:</Text>
-          {doc.commercialFields.map((cf) => (
-            <Text key={cf.id} style={styles.bullet}>
-              • {cf.label}
-              {cf.required ? ' (required)' : ''}
+          <Text style={styles.bullet}>For each line item, the vendor provides:</Text>
+          {PER_LINE_RESPONSE_ITEMS.map((item, i) => (
+            <Text key={`pl-${i}`} style={styles.bullet}>
+              • {item}
             </Text>
           ))}
+          {doc.commercialFields.length > 0 && (
+            <>
+              <Text style={[styles.bullet, { marginTop: 6 }]}>
+                Once for the whole quote:
+              </Text>
+              {doc.commercialFields.map((cf) => (
+                <Text key={cf.id} style={styles.bullet}>
+                  • {cf.label}
+                  {cf.required ? ' (required)' : ''}
+                </Text>
+              ))}
+            </>
+          )}
         </View>
 
         {/* 3. Quality questionnaire */}

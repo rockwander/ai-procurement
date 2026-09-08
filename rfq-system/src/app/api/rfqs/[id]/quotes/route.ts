@@ -3,6 +3,7 @@ import { db } from '@/db';
 import { rfqs, rfqLineItems, rfqInvitations, quoteSubmissions, suppliers } from '@/db/schema';
 import { eq, asc } from 'drizzle-orm';
 import { getAuthUser, unauthorized, notFound, serverError } from '@/lib/api';
+import { normalizeRFQDocument } from '@/lib/rfq-document';
 
 /**
  * All quote submissions for an RFQ, flattened for the comparison table.
@@ -56,8 +57,19 @@ export async function GET(
       lineItems: (r.submission?.lineItems as Array<Record<string, unknown>>) ?? [],
     }));
 
+    const rfqDoc = rfq.rfqDocument
+      ? normalizeRFQDocument(rfq.rfqDocument, { rfqId: rfq.id, buyer: '', fillDefaults: false })
+      : null;
+    const currency = rfqDoc?.header.currency || 'INR';
+
     return NextResponse.json({
-      rfq: { id: rfq.id, title: rfq.title, status: rfq.status, formSchema: rfq.formSchema },
+      rfq: {
+        id: rfq.id,
+        title: rfq.title,
+        status: rfq.status,
+        formSchema: rfq.formSchema,
+        currency,
+      },
       lineItems: lineItems.map((li) => ({
         id: li.id,
         itemDescription: li.itemDescription,

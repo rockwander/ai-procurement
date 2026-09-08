@@ -7,9 +7,16 @@ import { QuoteChat, ChatApplyPayload } from '@/components/QuoteChat';
 import { Button, ErrorText } from '@/components/ui';
 import { api } from '@/lib/fetcher';
 import { FormSchema, emptySchema, sortedFields } from '@/lib/form-schema';
+import {
+  LineItemResponse,
+  RFQLineForResponse,
+  emptyLineResponse,
+  normaliseLineResponse,
+  committedQty,
+} from '@/lib/line-response';
 
 interface QuoteData {
-  rfq: { title: string; summary: string; deadline: string | null };
+  rfq: { title: string; summary: string; deadline: string | null; currency: string };
   supplier: { companyName: string };
   formSchema: FormSchema;
   lineItems: LineItemInput[];
@@ -27,7 +34,7 @@ export default function SupplierQuotePage() {
 
   const [value, setValue] = useState<QuoteFormValue>({
     formData: {},
-    lineItemPrices: {},
+    lineResponses: {},
     notes: '',
   });
   // fieldId -> the assistant's fuller answer, when it had to be shortened to
@@ -39,13 +46,20 @@ export default function SupplierQuotePage() {
       .then((d) => {
         setData(d);
         if (d.submission) {
-          const prices: Record<string, number> = {};
-          for (const li of d.submission.lineItems ?? []) {
-            prices[String(li.itemId)] = Number(li.unitPrice);
+          const byId = new Map(
+            (d.submission.lineItems ?? []).map((li: any) => [String(li.itemId), li])
+          );
+          const lineResponses: Record<string, LineItemResponse> = {};
+          for (const li of d.lineItems) {
+            lineResponses[li.id] = normaliseLineResponse(
+              byId.get(li.id),
+              li as RFQLineForResponse,
+              d.rfq.currency
+            );
           }
           setValue({
             formData: d.submission.formData ?? {},
-            lineItemPrices: prices,
+            lineResponses,
             notes: '',
           });
         }
@@ -63,10 +77,21 @@ export default function SupplierQuotePage() {
     for (const f of sortedFields(schema)) {
       if (f.required && !value.formData[f.id]) missing.push(f.label);
     }
+    let pricedLines = 0;
     for (const li of data.lineItems) {
-      if (!value.lineItemPrices[li.id] || value.lineItemPrices[li.id] <= 0) {
-        missing.push(`price for ${li.itemDescription}`);
+      const r =
+        value.lineResponses[li.id] ??
+        emptyLineResponse(li as RFQLineForResponse, data.rfq.currency);
+      if (r.canSupply !== 'no') {
+        if (r.unitPrice == null || r.unitPrice <= 0) {
+          missing.push(`price for ${li.itemDescription}`);
+        } else {
+          pricedLines++;
+        }
       }
+    }
+    if (pricedLines === 0) {
+      missing.push('at least one line item priced');
     }
     return missing;
   }, [data, schema, value]);
@@ -77,13 +102,26 @@ export default function SupplierQuotePage() {
     setSubmitting(true);
     try {
       const lineItems = data.lineItems.map((li) => {
-        const unitPrice = value.lineItemPrices[li.id] ?? 0;
+        const r =
+          value.lineResponses[li.id] ??
+          emptyLineResponse(li as RFQLineForResponse, data.rfq.currency);
+        const qty = committedQty(r, li.quantity);
+        const unitPrice = r.canSupply === 'no' ? null : r.unitPrice;
         return {
           itemId: li.id,
           itemDescription: li.itemDescription,
-          quantity: li.quantity,
+          quantity: li.quantity, // asked qty
+          canSupply: r.canSupply,
           unitPrice,
-          totalPrice: unitPrice * li.quantity,
+          currency: r.currency,
+          quotedUom: r.quotedUom,
+          availableQty: r.availableQty,
+          committedQty: qty,
+          leadTimeDays: r.leadTimeDays,
+          moq: r.moq,
+          // totalPrice at the committed qty in the quoted currency — a rough
+          // headline only; the comparison normalises UoM/currency itself.
+          totalPrice: unitPrice != null ? unitPrice * qty : null,
         };
       });
       await api(`/api/quote/${token}`, {
@@ -157,6 +195,7 @@ export default function SupplierQuotePage() {
             <QuoteForm
               schema={schema}
               lineItems={data.lineItems}
+              rfqCurrency={data.rfq.currency}
               value={value}
               onChange={setValue}
               disabled={!!locked}
@@ -190,14 +229,32 @@ export default function SupplierQuotePage() {
             <QuoteChat
               token={token}
               currentFormData={value.formData}
-              currentLinePrices={value.lineItemPrices}
+              currentLinePrices={Object.fromEntries(
+                Object.entries(value.lineResponses)
+                  .filter(([, r]) => r.unitPrice != null)
+                  .map(([id, r]) => [id, r.unitPrice as number])
+              )}
               disabled={!!locked}
               onApply={(payload: ChatApplyPayload) => {
-                setValue((prev) => ({
-                  ...prev,
-                  formData: { ...prev.formData, ...payload.fields },
-                  lineItemPrices: { ...prev.lineItemPrices, ...payload.lineItemPrices },
-                }));
+                setValue((prev) => {
+                  // The AI assist fills unit prices; fold each into the fixed
+                  // per-line response, leaving the supplier to confirm
+                  // can-supply / UoM / available qty.
+                  const lineResponses = { ...prev.lineResponses };
+                  for (const [itemId, price] of Object.entries(payload.lineItemPrices)) {
+                    const li = data.lineItems.find((x) => x.id === itemId);
+                    if (!li) continue;
+                    const current =
+                      lineResponses[itemId] ??
+                      emptyLineResponse(li as RFQLineForResponse, data.rfq.currency);
+                    lineResponses[itemId] = { ...current, unitPrice: price, itemId };
+                  }
+                  return {
+                    ...prev,
+                    formData: { ...prev.formData, ...payload.fields },
+                    lineResponses,
+                  };
+                });
                 setAiNotes((prev) => ({ ...prev, ...payload.notes }));
               }}
             />

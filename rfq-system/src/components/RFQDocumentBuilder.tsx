@@ -215,19 +215,32 @@ export function RFQDocumentBuilder({
       <section>
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-semibold text-gray-900">
-            2. Commercial information requested ({doc.commercialFields.length})
+            2. Commercial information requested
           </h3>
           <Button
             variant="secondary"
             size="sm"
             onClick={() => setCF([...doc.commercialFields, newCommercialField()])}
           >
-            + Add field
+            + Add quote-level field
           </Button>
         </div>
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 mb-3 text-xs text-gray-600">
+          <p className="font-medium text-gray-700 mb-1">
+            Per line item (fixed — always asked, not editable):
+          </p>
+          <p>
+            Can-supply (full / partial / no), unit price, currency, unit of
+            measure, quantity available, lead time, MOQ. Captured in the
+            supplier's line-item table so the comparison can normalise and rank
+            them.
+          </p>
+        </div>
         <p className="text-xs text-gray-500 mb-3">
-          Fields the supplier answers <strong>once per line item</strong>. The
-          name is the label they see; the type sets the input control.
+          Below: extra commercial fields the supplier answers{' '}
+          <strong>once for the whole quote</strong> (tooling charges, rebate
+          tiers, price validity…). The name is the label they see; the type sets
+          the control.
         </p>
         <div className="space-y-3">
           {doc.commercialFields.map((cf, i) => (

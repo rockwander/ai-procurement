@@ -20,7 +20,11 @@ export interface RFQLineItemDoc {
   unit: string;
 }
 
-// A field the vendor must supply for every line item (section 2).
+// A commercial field the vendor answers ONCE for the whole quote (section 2) —
+// e.g. tooling charges, rebate tiers, price validity. The per-line-item response
+// (unit price, currency, UoM, can-supply, available qty, lead time, MOQ) is a
+// FIXED schema and is NOT represented here — see src/lib/line-response.ts and
+// MASTER_SPEC 2026-09-09.
 export interface CommercialField {
   id: string;
   label: string;
@@ -39,7 +43,7 @@ export interface QuestionnaireItem {
 export interface RFQDocument {
   header: RFQHeader;
   lineItems: RFQLineItemDoc[];
-  commercialFields: CommercialField[];   // section 2 — per line item
+  commercialFields: CommercialField[];   // section 2 — quote-level, answered once
   questionnaire: QuestionnaireItem[];    // section 3
   supportingDocsNote: string;            // section 3 upload ask
   termsAndConditions: string[];          // section 4
@@ -51,19 +55,34 @@ function rid(prefix: string): string {
   return `${prefix}_${seq.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** The commercial fields every RFQ asks for by default (MASTER_SPEC §2.2). */
+/**
+ * Quote-level commercial fields every RFQ asks for by default. These are
+ * answered ONCE for the whole quote. Per-line commercials (unit price, currency,
+ * UoM, MOQ, lead time, can-supply, available qty) are a fixed schema handled in
+ * src/lib/line-response.ts and are NOT listed here.
+ */
 export function defaultCommercialFields(): CommercialField[] {
   return [
-    { id: rid('cf'), label: 'Unit price', type: 'number', required: true },
-    { id: rid('cf'), label: 'Currency', type: 'text', required: true },
-    { id: rid('cf'), label: 'Unit of measurement', type: 'text', required: true },
-    { id: rid('cf'), label: 'MOQ', type: 'number', required: false },
-    { id: rid('cf'), label: 'Lead time', type: 'text', required: true },
-    { id: rid('cf'), label: 'Applicable taxes', type: 'text', required: false },
-    { id: rid('cf'), label: 'Freight/transport charges', type: 'text', required: false },
-    { id: rid('cf'), label: 'Discount, if any', type: 'text', required: false },
+    { id: rid('cf'), label: 'Applicable taxes (GST %)', type: 'text', required: true },
+    { id: rid('cf'), label: 'Freight / transport charges', type: 'text', required: true },
+    { id: rid('cf'), label: 'Payment terms offered', type: 'text', required: false },
+    { id: rid('cf'), label: 'Volume / rebate discount', type: 'text', required: false },
+    { id: rid('cf'), label: 'One-time tooling / setup charges', type: 'text', required: false },
+    { id: rid('cf'), label: 'Price validity', type: 'text', required: false },
   ];
 }
+
+/** Human-readable list of what the fixed per-line response captures — used by
+ *  the PDF's "Commercial information requested" section and the form builder. */
+export const PER_LINE_RESPONSE_ITEMS: string[] = [
+  'Whether you can supply the item (in full, partially, or not at all)',
+  'Unit price',
+  'Currency (if different from the RFQ currency)',
+  'Unit of measure your price is quoted in (e.g. per piece, per 100, per box)',
+  'Quantity you can supply (if less than the quantity asked)',
+  'Lead time in days',
+  'Minimum order quantity',
+];
 
 export function defaultTerms(): string[] {
   return [
@@ -101,7 +120,7 @@ export function newLineItem(line: number): RFQLineItemDoc {
 }
 
 export function newCommercialField(): CommercialField {
-  return { id: rid('cf'), label: 'New field', type: 'text', required: false };
+  return { id: rid('cf'), label: 'New quote-level field', type: 'text', required: false };
 }
 
 export function newQuestion(): QuestionnaireItem {
@@ -208,10 +227,13 @@ export function rfqDocumentToText(doc: RFQDocument): string {
       parts.push(`  ${li.line}. ${li.item} — ${li.specification} — ${li.quantity} ${li.unit}`)
     );
   }
+  parts.push('\nCommercial information requested:');
+  parts.push('  For each line item: ' + PER_LINE_RESPONSE_ITEMS.join('; ') + '.');
   if (doc.commercialFields.length) {
     parts.push(
-      '\nCommercial information requested per line item: ' +
-        doc.commercialFields.map((c) => c.label).join(', ')
+      '  Once for the whole quote: ' +
+        doc.commercialFields.map((c) => c.label).join(', ') +
+        '.'
     );
   }
   if (doc.questionnaire.length) {
