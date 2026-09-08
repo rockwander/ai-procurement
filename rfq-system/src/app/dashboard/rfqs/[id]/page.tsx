@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
 import { SupplierPicker } from '@/components/SupplierPicker';
-import { Button, Card, StatusBadge, Spinner, ErrorText, Badge } from '@/components/ui';
+import { Button, Card, StatusBadge, Spinner, ErrorText } from '@/components/ui';
 import { api } from '@/lib/fetcher';
 
 interface Invitation {
@@ -22,7 +22,6 @@ export default function RFQDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [rfq, setRfq] = useState<any>(null);
-  const [lineItems, setLineItems] = useState<any[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -30,9 +29,8 @@ export default function RFQDetailPage() {
   const [deleting, setDeleting] = useState(false);
 
   const loadRfq = useCallback(async () => {
-    const d = await api<{ rfq: any; lineItems: any[] }>(`/api/rfqs/${id}`);
+    const d = await api<{ rfq: any }>(`/api/rfqs/${id}`);
     setRfq(d.rfq);
-    setLineItems(d.lineItems);
   }, [id]);
 
   const loadQuotes = useCallback(async () => {
@@ -117,29 +115,8 @@ export default function RFQDetailPage() {
         </div>
       </div>
 
-      {rfq.hasContent && (
-        <Card className="p-0 mb-6 overflow-hidden">
-          <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between">
-            <span className="text-sm font-semibold text-gray-900">RFQ document</span>
-            <a
-              href={`/api/rfqs/${id}/pdf`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs text-blue-600 hover:underline"
-            >
-              open in new tab
-            </a>
-          </div>
-          <iframe
-            src={`/api/rfqs/${id}/pdf`}
-            className="w-full h-[70vh] border-0"
-            title="RFQ PDF"
-          />
-        </Card>
-      )}
-
       {submittedCount > 0 && (
-        <div className="mb-6 text-sm">
+        <div className="mb-4 text-sm">
           <Link
             href={`/dashboard/rfqs/${id}/quotes`}
             className="text-blue-600 hover:underline"
@@ -151,46 +128,32 @@ export default function RFQDetailPage() {
 
       {error && <div className="mb-4"><ErrorText>{error}</ErrorText></div>}
 
-      <div className="grid lg:grid-cols-2 gap-6">
+      <div className="grid lg:grid-cols-2 gap-6 items-start">
+        {/* Left: pick suppliers, then the ones invited so far */}
         <div className="space-y-6">
-          <Card className="p-5">
-            <h2 className="font-semibold text-gray-900 mb-3">
-              Line items ({lineItems.length})
-            </h2>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-gray-500 border-b border-gray-200">
-                  <th className="py-2">Item</th>
-                  <th className="py-2">Qty</th>
-                  <th className="py-2">Unit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lineItems.map((li) => (
-                  <tr key={li.id} className="border-b border-gray-100">
-                    <td className="py-2 text-gray-800">{li.itemDescription}</td>
-                    <td className="py-2 text-gray-600">{li.quantity}</td>
-                    <td className="py-2 text-gray-600">{li.unit}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          <SupplierPicker
+            rfqId={id}
+            alreadyInvited={invitedIds}
+            onSent={() => {
+              loadRfq();
+              loadQuotes();
+            }}
+          />
 
           <Card className="p-5">
             <h2 className="font-semibold text-gray-900 mb-3">
-              Invitations ({invitations.length})
+              Selected suppliers ({invitations.length})
             </h2>
             {invitations.length === 0 ? (
               <p className="text-sm text-gray-500">
-                No suppliers invited yet. Use the panel on the right.
+                None yet. Select suppliers above and send the RFQ.
               </p>
             ) : (
               <div className="space-y-2">
                 {invitations.map((inv) => (
                   <div
                     key={inv.invitationId}
-                    className="flex items-center justify-between border-b border-gray-100 pb-2 text-sm"
+                    className="flex items-center justify-between border-b border-gray-100 pb-2 text-sm last:border-0 last:pb-0"
                   >
                     <div>
                       <span className="text-gray-900 font-medium">
@@ -228,14 +191,31 @@ export default function RFQDetailPage() {
           </Card>
         </div>
 
-        <SupplierPicker
-          rfqId={id}
-          alreadyInvited={invitedIds}
-          onSent={() => {
-            loadRfq();
-            loadQuotes();
-          }}
-        />
+        {/* Right: the RFQ PDF */}
+        {rfq.hasContent ? (
+          <Card className="p-0 overflow-hidden lg:sticky lg:top-6">
+            <div className="px-4 py-2 border-b border-gray-200 flex items-center justify-between">
+              <span className="text-sm font-semibold text-gray-900">RFQ document</span>
+              <a
+                href={`/api/rfqs/${id}/pdf`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-blue-600 hover:underline"
+              >
+                open in new tab
+              </a>
+            </div>
+            <iframe
+              src={`/api/rfqs/${id}/pdf`}
+              className="w-full h-[80vh] border-0"
+              title="RFQ PDF"
+            />
+          </Card>
+        ) : (
+          <Card className="p-8 text-center text-sm text-gray-400">
+            This RFQ has no document yet.
+          </Card>
+        )}
       </div>
     </AppShell>
   );
