@@ -119,7 +119,7 @@ export default function NewRFQPage() {
     }
   }
 
-  async function apply(tickedIds: string[]) {
+  async function apply(tickedIds: string[], editedDocument: RFQDocument) {
     if (!rfqId || applying) return;
     setApplying(true);
     setError('');
@@ -130,7 +130,11 @@ export default function NewRFQPage() {
         rfqDocument: RFQDocument;
       }>(`/api/rfqs/${rfqId}/draft-chat`, {
         method: 'POST',
-        body: JSON.stringify({ action: 'apply', tickedSectionIds: tickedIds }),
+        body: JSON.stringify({
+          action: 'apply',
+          tickedSectionIds: tickedIds,
+          editedDocument,
+        }),
       });
       // mark the outline message that produced this outline as applied
       const lastOutlineMsg = [...messages].reverse().find((m) => m.kind === 'outline');
