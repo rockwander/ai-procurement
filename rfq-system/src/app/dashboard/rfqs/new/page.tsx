@@ -39,6 +39,7 @@ export default function NewRFQPage() {
   const [busy, setBusy] = useState(false);
   const [applying, setApplying] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [savingDoc, setSavingDoc] = useState(false);
   const [error, setError] = useState('');
   const [view, setView] = useState<View>('pdf');
@@ -148,33 +149,43 @@ export default function NewRFQPage() {
     }
   }
 
-  async function upload(file: File) {
+  async function uploadOne(file: File) {
     if (!rfqId) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(`/api/rfqs/${rfqId}/attachments`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Couldn't read ${file.name}`);
+    setMessages((m) => [
+      ...m,
+      {
+        id: data.attachment.id,
+        role: 'user',
+        kind: 'attachment',
+        content: `Attached ${data.attachment.name} (${data.attachment.chars.toLocaleString()} chars${
+          data.attachment.truncated ? ', truncated' : ''
+        })`,
+        attachmentName: data.attachment.name,
+      },
+    ]);
+  }
+
+  async function uploadFiles(files: FileList | File[]) {
+    if (!rfqId) return;
+    const list = Array.from(files);
+    if (list.length === 0) return;
     setUploading(true);
     setError('');
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch(`/api/rfqs/${rfqId}/attachments`, { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
-      setMessages((m) => [
-        ...m,
-        {
-          id: data.attachment.id,
-          role: 'user',
-          kind: 'attachment',
-          content: `Attached ${data.attachment.name} (${data.attachment.chars.toLocaleString()} chars${
-            data.attachment.truncated ? ', truncated' : ''
-          })`,
-          attachmentName: data.attachment.name,
-        },
-      ]);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setUploading(false);
+    const failed: string[] = [];
+    for (const f of list) {
+      try {
+        await uploadOne(f);
+      } catch (e: any) {
+        failed.push(e.message);
+      }
     }
+    if (failed.length) setError(failed.join(' · '));
+    setUploading(false);
   }
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -203,6 +214,8 @@ export default function NewRFQPage() {
   function saveAndOpen() {
     if (rfqId) router.push(`/dashboard/rfqs/${rfqId}`);
   }
+
+  const attachmentCount = messages.filter((m) => m.kind === 'attachment').length;
 
   // ---------- render ----------
 
@@ -300,42 +313,83 @@ export default function NewRFQPage() {
               ref={fileRef}
               type="file"
               accept={SUPPORTED_DOC_EXTENSIONS.join(',')}
+              multiple
               className="hidden"
               onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) upload(f);
+                if (e.target.files?.length) uploadFiles(e.target.files);
                 e.target.value = '';
               }}
             />
-            <textarea
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              rows={2}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Describe the need, paste content, or ask for a change…"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send('message');
+
+            {/* Composer: textarea with an inline clip + send */}
+            <div
+              className={`relative rounded-lg border ${
+                dragOver ? 'border-blue-400 bg-blue-50/40' : 'border-gray-300'
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
               }}
-            />
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => fileRef.current?.click()}
-                disabled={uploading}
-              >
-                {uploading ? 'Reading…' : 'Attach document'}
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => send('message')} disabled={busy}>
-                Send
-              </Button>
-              <Button size="sm" onClick={() => send('outline')} disabled={busy}>
-                {hasContent || pendingOutline ? 'Rebuild outline' : 'Build / update RFQ'}
-              </Button>
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files);
+              }}
+            >
+              <textarea
+                className="w-full resize-none bg-transparent px-3 pt-2 pb-9 text-sm focus:outline-none"
+                rows={3}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Describe the need, paste content, or ask for a change…  Attach docs with the clip."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send('message');
+                }}
+              />
+              <div className="absolute inset-x-2 bottom-1.5 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploading}
+                  title="Attach documents"
+                  className="flex items-center gap-1 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+                >
+                  <PaperclipIcon />
+                  {uploading && <span className="text-xs">reading…</span>}
+                  {attachmentCount > 0 && !uploading && (
+                    <span className="text-xs text-gray-500">{attachmentCount}</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => send('message')}
+                  disabled={busy || !input.trim()}
+                  title="Send note (Cmd/Ctrl+Enter)"
+                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
+                >
+                  <SendIcon />
+                </button>
+              </div>
             </div>
+
+            <Button
+              size="sm"
+              className="w-full"
+              onClick={() => send('outline')}
+              disabled={busy}
+            >
+              {busy
+                ? 'Working…'
+                : hasContent || pendingOutline
+                ? 'Rebuild outline'
+                : 'Build RFQ outline'}
+            </Button>
+
             <p className="text-xs text-gray-400">
-              Accepts {SUPPORTED_DOC_EXTENSIONS.join(', ')}. I propose an outline from
-              the whole conversation — you confirm before the RFQ is written.
+              Send adds a note to the chat. “Build / Rebuild outline” reads the whole
+              conversation and proposes an outline to confirm. Attach{' '}
+              {SUPPORTED_DOC_EXTENSIONS.join(', ')} — multiple at once.
             </p>
           </div>
         </Card>
@@ -400,5 +454,42 @@ export default function NewRFQPage() {
         </Card>
       </div>
     </AppShell>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 6.34l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m22 2-7 20-4-9-9-4Z" />
+      <path d="M22 2 11 13" />
+    </svg>
   );
 }
