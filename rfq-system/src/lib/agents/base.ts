@@ -30,9 +30,22 @@ export interface AgentLogData {
 export class BaseAgent {
   protected model = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 
-  // Call Gemini API with structured logging + retry on transient errors
-  // (429 rate limit, 503 overload). Falls back to a secondary model on the
-  // last attempt so a demo doesn't hard-fail on a capacity spike.
+  /**
+   * The model chain: the agent's primary model, then the configured fallbacks.
+   * Each is tried with a couple of retries for transient errors (429/503/500);
+   * a non-transient error (e.g. 404 model-not-available) rolls straight to the
+   * next model. Override the chain with GEMINI_MODEL_FALLBACK (comma-separated).
+   */
+  protected get modelChain(): string[] {
+    const fallbacks = (
+      process.env.GEMINI_MODEL_FALLBACK || 'gemini-flash-lite-latest,gemini-3-flash-preview'
+    )
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return [this.model, ...fallbacks.filter((m) => m !== this.model)];
+  }
+
   protected async callGemini(
     prompt: string,
     options?: {
@@ -41,51 +54,47 @@ export class BaseAgent {
     }
   ): Promise<{ text: string; tokensUsed: number }> {
     const startTime = Date.now();
-    const maxAttempts = 4;
-    const fallbackModel = process.env.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash';
-
+    const retriesPerModel = 2;
     let lastError: unknown;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const modelName =
-        attempt === maxAttempts && this.model !== fallbackModel
-          ? fallbackModel
-          : this.model;
-      try {
-        const model = genAI.getGenerativeModel({
-          model: modelName,
-          systemInstruction: options?.systemInstruction,
-          generationConfig: {
-            temperature: options?.temperature ?? 1.0,
-          },
-        });
 
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
+    for (const modelName of this.modelChain) {
+      for (let attempt = 1; attempt <= retriesPerModel; attempt++) {
+        try {
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            systemInstruction: options?.systemInstruction,
+            generationConfig: { temperature: options?.temperature ?? 1.0 },
+          });
 
-        const estimatedTokens = Math.ceil((prompt.length + text.length) / 4);
-        console.log(
-          `✅ Gemini (${modelName}) succeeded in ${Date.now() - startTime}ms (attempt ${attempt})`
-        );
-        return { text, tokensUsed: estimatedTokens };
-      } catch (error) {
-        lastError = error;
-        const msg = error instanceof Error ? error.message : String(error);
-        const transient = /\b(429|503|500|overloaded|high demand|rate limit)\b/i.test(msg);
-        console.error(
-          `❌ Gemini (${modelName}) failed attempt ${attempt}/${maxAttempts}: ${msg}`
-        );
-        if (!transient || attempt === maxAttempts) break;
-        await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+          const result = await model.generateContent(prompt);
+          const text = result.response.text();
+          const estimatedTokens = Math.ceil((prompt.length + text.length) / 4);
+          console.log(
+            `✅ Gemini (${modelName}) succeeded in ${Date.now() - startTime}ms`
+          );
+          return { text, tokensUsed: estimatedTokens };
+        } catch (error) {
+          lastError = error;
+          const msg = error instanceof Error ? error.message : String(error);
+          const transient = /\b(429|500|502|503|504|overloaded|high demand|rate limit|unavailable)\b/i.test(msg);
+          console.error(
+            `❌ Gemini (${modelName}) attempt ${attempt}/${retriesPerModel}: ${msg}`
+          );
+          if (!transient) break; // non-transient → next model, no more retries here
+          if (attempt < retriesPerModel) {
+            await new Promise((r) => setTimeout(r, 600 * 2 ** (attempt - 1)));
+          }
+          // transient + out of retries → fall through to next model
+        }
       }
     }
     throw lastError;
   }
 
-  // Calculate cost based on token usage (Gemini 2.5 Flash pricing)
+  // Rough cost estimate. We don't split input/output tokens, so this uses a
+  // blended per-token rate in the Gemini Flash range (~$0.15 / 1M). Indicative
+  // only — the free tier is $0.
   protected calculateCost(tokens: number): number {
-    // Gemini 2.5 Flash pricing (free tier: generous limits)
-    // Paid tier: $0.075 per 1M input tokens, $0.30 per 1M output tokens
-    // Simplified: average $0.15 per 1M tokens
     const COST_PER_MILLION = 0.15;
     return (tokens / 1_000_000) * COST_PER_MILLION;
   }
