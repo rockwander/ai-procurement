@@ -5,6 +5,7 @@ import {
   defaultCommercialFields,
   defaultTerms,
 } from '@/lib/rfq-document';
+import { buildOutline, type RFQOutline } from '@/lib/rfq-outline';
 
 export interface RFQThreadEntry {
   role: 'user' | 'assistant';
@@ -21,6 +22,8 @@ export interface RFQDraftInput {
   rfqId: string;
   /** The current RFQ document, if a previous "update" already produced one. */
   currentDocument?: RFQDocument | null;
+  /** Section headings the buyer chose to exclude — do not re-add these. */
+  excludedSections?: string[];
 }
 
 export class RFQDraftingAgent extends BaseAgent {
@@ -145,6 +148,13 @@ Rules:
       m += '```json\n' + JSON.stringify(input.currentDocument, null, 2) + '\n```\n\n';
     }
 
+    if (input.excludedSections && input.excludedSections.length > 0) {
+      m += `## The buyer has explicitly chosen NOT to include these in the RFQ\n`;
+      m += `Do not add them back, even if a policy or document suggests them:\n`;
+      input.excludedSections.forEach((s) => (m += `- ${s}\n`));
+      m += `\n`;
+    }
+
     if (input.policyDocuments.length > 0) {
       m += `## Company policies (must be complied with)\n\n`;
       input.policyDocuments.forEach((p) => {
@@ -167,6 +177,29 @@ Rules:
 
     m += `\nGenerate the RFQ document JSON now.`;
     return m;
+  }
+
+  /**
+   * The outline step: draft the full RFQ document from the thread, then derive
+   * a reviewable outline of ticked sub-headings from it (no second AI call).
+   * `prevOutline` carries the buyer's tick choices across a re-outline.
+   */
+  async draftOutline(
+    input: RFQDraftInput,
+    prevOutline?: RFQOutline | null,
+    rfqId?: string
+  ): Promise<AgentResponse<RFQOutline>> {
+    const res = await this.draftRFQ(input, rfqId);
+    if (!res.success || !res.data) {
+      return { success: false, error: res.error, durationMs: res.durationMs };
+    }
+    return {
+      success: true,
+      data: buildOutline(res.data, prevOutline, input.excludedSections),
+      tokensUsed: res.tokensUsed,
+      costUsd: res.costUsd,
+      durationMs: res.durationMs,
+    };
   }
 
   /** Fallbacks re-exported for callers that need a starting document. */

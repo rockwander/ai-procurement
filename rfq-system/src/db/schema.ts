@@ -45,6 +45,14 @@ export const rfqs = pgTable('rfqs', {
   // questionnaire / terms). Canonical since the conversational-creation
   // refinement; the PDF and form builder both render this.
   rfqDocument: jsonb('rfq_document'),
+  // The outline proposed by the Drafting Agent and awaiting the buyer's
+  // "Confirm & apply". Shape: { document: RFQDocument, sections: OutlineSection[] }.
+  // Cleared once applied. See rfq-outline.ts.
+  pendingOutline: jsonb('pending_outline'),
+  // Section headings the buyer explicitly unticked on the last apply, so the
+  // next outline both keeps them unticked and tells the Drafting Agent not to
+  // re-add them. Shape: string[].
+  excludedSections: jsonb('excluded_sections'),
   generatedContent: text('generated_content'),  // legacy AI-generated RFQ content (pre-refinement)
   // True once the buyer has run at least one "update" so the RFQ has content.
   hasContent: boolean('has_content').notNull().default(false),
@@ -59,9 +67,14 @@ export const rfqDraftMessages = pgTable('rfq_draft_messages', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   rfqId: text('rfq_id').notNull().references(() => rfqs.id, { onDelete: 'cascade' }),
   role: text('role', { enum: ['user', 'assistant', 'system'] }).notNull(),
-  // 'message' = normal turn; 'update' = the buyer triggered a regeneration;
-  // 'attachment' = extracted text from an uploaded / pasted document.
-  kind: text('kind', { enum: ['message', 'update', 'attachment'] }).notNull().default('message'),
+  // 'message' = normal turn; 'attachment' = extracted text from an uploaded /
+  // pasted document; 'outline' = an assistant turn carrying a proposed outline
+  // for the buyer to review; 'apply' = the buyer confirmed an outline and the
+  // RFQ was (re)generated. ('update' is the pre-outline-flow marker, kept for
+  // old threads.)
+  kind: text('kind', {
+    enum: ['message', 'update', 'attachment', 'outline', 'apply'],
+  }).notNull().default('message'),
   content: text('content').notNull(),
   attachmentName: text('attachment_name'),  // original filename for kind='attachment'
   createdAt: timestamp('created_at').notNull().defaultNow(),

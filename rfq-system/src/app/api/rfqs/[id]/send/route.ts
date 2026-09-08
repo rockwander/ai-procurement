@@ -57,6 +57,7 @@ export async function POST(
     const doc = normalizeRFQDocument(rfq.rfqDocument, {
       rfqId: rfq.id,
       buyer: user.name,
+      fillDefaults: false,
     });
     const summary = rfqDocumentToText(doc).slice(0, 600);
 

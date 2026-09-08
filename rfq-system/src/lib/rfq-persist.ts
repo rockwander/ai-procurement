@@ -22,9 +22,13 @@ export async function applyRFQDocument(
   doc: RFQDocument,
   source: 'ai' | 'manual'
 ): Promise<RFQDocument> {
+  // The doc is already a well-formed RFQDocument (from the outline filter or the
+  // form builder) — validate it but don't substitute default sections for
+  // deliberately-empty ones.
   const clean = normalizeRFQDocument(doc, {
     rfqId,
     buyer: doc.header?.buyer || '',
+    fillDefaults: false,
   });
 
   const formSchema = rfqDocumentToFormSchema(clean);

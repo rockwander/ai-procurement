@@ -115,12 +115,18 @@ export function renumber(items: RFQLineItemDoc[]): RFQLineItemDoc[] {
 
 /**
  * Coerce whatever the drafting agent returned (or a legacy generatedContent
- * blob) into a valid RFQDocument, filling gaps with defaults.
+ * blob) into a valid RFQDocument.
+ *
+ * `fillDefaults` (default true): when the commercial fields or terms come back
+ * empty, substitute the standard set — a raw AI response with none is more
+ * likely incomplete than intentional. Pass `false` when the document was
+ * deliberately filtered (e.g. `documentFromOutline`), so empty means empty.
  */
 export function normalizeRFQDocument(
   raw: unknown,
-  fallback: { rfqId: string; buyer: string }
+  fallback: { rfqId: string; buyer: string; fillDefaults?: boolean }
 ): RFQDocument {
+  const fillDefaults = fallback.fillDefaults !== false;
   const base = emptyRFQDocument(fallback.rfqId, fallback.buyer);
   if (!raw || typeof raw !== 'object') return base;
   const r = raw as Record<string, any>;
@@ -155,7 +161,8 @@ export function normalizeRFQDocument(
         // not something a supplier can answer.
         .filter((cf: CommercialField) => cf.label.length > 0)
     : [];
-  const commercialFields: CommercialField[] = rawCF.length ? rawCF : base.commercialFields;
+  const commercialFields: CommercialField[] =
+    rawCF.length || !fillDefaults ? rawCF : base.commercialFields;
 
   const questionnaire: QuestionnaireItem[] = Array.isArray(r.questionnaire)
     ? r.questionnaire
@@ -170,9 +177,10 @@ export function normalizeRFQDocument(
         .filter((q: QuestionnaireItem) => q.question.length > 0)
     : [];
 
-  const termsAndConditions: string[] = Array.isArray(r.termsAndConditions) && r.termsAndConditions.length
-    ? r.termsAndConditions.map(String)
-    : base.termsAndConditions;
+  const termsAndConditions: string[] =
+    (Array.isArray(r.termsAndConditions) && r.termsAndConditions.length) || !fillDefaults
+      ? (Array.isArray(r.termsAndConditions) ? r.termsAndConditions.map(String) : [])
+      : base.termsAndConditions;
 
   return {
     header,

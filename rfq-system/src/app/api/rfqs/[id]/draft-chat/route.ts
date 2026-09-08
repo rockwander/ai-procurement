@@ -11,14 +11,21 @@ import {
 } from '@/lib/api';
 import { RFQDraftingAgent, type RFQThreadEntry } from '@/lib/agents/rfq-drafting';
 import { applyRFQDocument } from '@/lib/rfq-persist';
-import { normalizeRFQDocument, type RFQDocument } from '@/lib/rfq-document';
+import type { RFQDocument } from '@/lib/rfq-document';
+import {
+  documentFromOutline,
+  outlineToText,
+  type RFQOutline,
+} from '@/lib/rfq-outline';
 import { sanitizeText } from '@/lib/doc-extract';
 
 /**
- * The create-RFQ conversation.
- * GET  → the thread so far + current RFQ document.
- * POST → append a turn. If `action === 'update'`, run the Drafting Agent over
- *        the whole thread and regenerate the RFQ document.
+ * The create-RFQ conversation. Flow (MASTER_SPEC §2 step 1):
+ *   action 'message'  → append a note, no regeneration
+ *   action 'outline'  → Drafting Agent proposes an outline (2 groups, ticked
+ *                       sub-headings); stored as rfqs.pendingOutline
+ *   action 'apply'    → { tickedSectionIds } → rebuild the RFQ from the ticked
+ *                       sections, regenerate PDF + form, clear the outline
  */
 
 export async function GET(
@@ -42,6 +49,7 @@ export async function GET(
     return NextResponse.json({
       messages,
       rfqDocument: rfq.rfqDocument ?? null,
+      pendingOutline: rfq.pendingOutline ?? null,
       hasContent: rfq.hasContent,
       status: rfq.status,
     });
@@ -66,26 +74,72 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { message, action } = body as {
+    const { message, action, tickedSectionIds } = body as {
       message?: string;
-      action?: 'message' | 'update';
+      action?: 'message' | 'outline' | 'apply';
+      tickedSectionIds?: string[];
     };
     const text = sanitizeText(message ?? '');
 
-    if (action !== 'update' && !text) {
-      return badRequest('message is required');
+    // ---------------------------------------------------------------- apply --
+    if (action === 'apply') {
+      const outline = rfq.pendingOutline as RFQOutline | null;
+      if (!outline) {
+        return badRequest('There is no outline to apply. Ask me to build the RFQ first.');
+      }
+      const ticked = new Set(tickedSectionIds ?? outline.sections.map((s) => s.id));
+      const withTicks: RFQOutline = {
+        document: outline.document,
+        sections: outline.sections.map((s) => ({ ...s, ticked: ticked.has(s.id) })),
+      };
+      const doc = documentFromOutline(withTicks);
+      const applied = await applyRFQDocument(id, doc, 'ai');
+
+      // Remember which named sections the buyer excluded, so the next outline
+      // keeps them unticked and the Drafting Agent doesn't re-add them.
+      const namedKinds = new Set(['lineItems', 'commercialFields', 'questionnaire', 'supportingDocs', 'header']);
+      const excluded = withTicks.sections
+        .filter((s) => !s.ticked && namedKinds.has(s.kind))
+        .map((s) => s.heading);
+      await db
+        .update(rfqs)
+        .set({ pendingOutline: null, excludedSections: excluded })
+        .where(eq(rfqs.id, id));
+      const [saved] = await db
+        .insert(rfqDraftMessages)
+        .values({
+          rfqId: id,
+          role: 'assistant',
+          kind: 'apply',
+          content:
+            `Applied to the RFQ: ${applied.lineItems.length} line item(s), ` +
+            `${applied.commercialFields.length} commercial field(s), ` +
+            `${applied.questionnaire.length} question(s), ` +
+            `${applied.termsAndConditions.length} term(s).` +
+            (excluded.length ? ` Left out: ${excluded.join('; ')}.` : '') +
+            ` Keep chatting to revise, or use the form builder for direct edits.`,
+        })
+        .returning();
+
+      return NextResponse.json({
+        assistant: saved,
+        applied: true,
+        rfqDocument: applied,
+        pendingOutline: null,
+      });
     }
 
-    // Record the buyer's turn.
+    // Record the buyer's turn for message / outline.
     await db.insert(rfqDraftMessages).values({
       rfqId: id,
       role: 'user',
-      kind: action === 'update' ? 'update' : 'message',
-      content: text || '(update)',
+      kind: action === 'outline' ? 'update' : 'message',
+      content: text || (action === 'outline' ? '(build the RFQ)' : ''),
     });
 
-    if (action !== 'update') {
-      // Plain message — acknowledge, no regeneration.
+    // -------------------------------------------------------------- message --
+    if (action !== 'outline') {
+      if (!text) return badRequest('message is required');
       const [saved] = await db
         .insert(rfqDraftMessages)
         .values({
@@ -93,13 +147,13 @@ export async function POST(
           role: 'assistant',
           kind: 'message',
           content:
-            'Got it. Add more details or documents whenever you\'re ready, then say "update" and I\'ll (re)generate the RFQ from everything so far.',
+            'Got it. Add more details or documents, then hit "Build / update RFQ" and I\'ll propose an outline for you to confirm.',
         })
         .returning();
       return NextResponse.json({ assistant: saved, regenerated: false });
     }
 
-    // --- "update": regenerate the RFQ document from the whole thread ---
+    // -------------------------------------------------------------- outline --
     const history = await db
       .select()
       .from(rfqDraftMessages)
@@ -108,7 +162,7 @@ export async function POST(
 
     const thread: RFQThreadEntry[] = history.map((h) => ({
       role: h.role === 'assistant' ? 'assistant' : 'user',
-      kind: h.kind,
+      kind: (h.kind === 'attachment' ? 'attachment' : h.kind === 'update' ? 'update' : 'message') as RFQThreadEntry['kind'],
       content: h.content,
       attachmentName: h.attachmentName ?? undefined,
     }));
@@ -123,18 +177,27 @@ export async function POST(
           .where(inArray(policyDocuments.id, policyIds))
       : [];
 
+    const excludedSections = Array.isArray(rfq.excludedSections)
+      ? (rfq.excludedSections as string[])
+      : [];
+
     const agent = new RFQDraftingAgent();
-    const result = await agent.draftRFQ({
-      thread,
-      policyDocuments: policies.map((p) => ({
-        title: p.title,
-        content: p.content,
-        category: p.category,
-      })),
-      buyerName: user.name,
-      rfqId: id,
-      currentDocument: (rfq.rfqDocument as RFQDocument) ?? null,
-    });
+    const result = await agent.draftOutline(
+      {
+        thread,
+        policyDocuments: policies.map((p) => ({
+          title: p.title,
+          content: p.content,
+          category: p.category,
+        })),
+        buyerName: user.name,
+        rfqId: id,
+        currentDocument: (rfq.rfqDocument as RFQDocument) ?? null,
+        excludedSections,
+      },
+      (rfq.pendingOutline as RFQOutline | null) ?? null,
+      id
+    );
 
     if (!result.success || !result.data) {
       const [saved] = await db
@@ -143,32 +206,29 @@ export async function POST(
           rfqId: id,
           role: 'assistant',
           kind: 'message',
-          content: `I couldn't generate the RFQ: ${result.error ?? 'unknown error'}. Try rephrasing or adding more detail, then say "update" again.`,
+          content: `I couldn't build the outline: ${result.error ?? 'unknown error'}. Try adding more detail, then build again.`,
         })
         .returning();
       return NextResponse.json({ assistant: saved, regenerated: false }, { status: 502 });
     }
 
-    const applied = await applyRFQDocument(id, result.data, 'ai');
+    const outline = result.data;
+    await db.update(rfqs).set({ pendingOutline: outline }).where(eq(rfqs.id, id));
 
     const [saved] = await db
       .insert(rfqDraftMessages)
       .values({
         rfqId: id,
         role: 'assistant',
-        kind: 'message',
-        content:
-          `Updated the RFQ from the thread so far: ${applied.lineItems.length} line item(s), ` +
-          `${applied.commercialFields.length} commercial field(s), ` +
-          `${applied.questionnaire.length} questionnaire question(s). ` +
-          `Switch to the form builder to fine-tune, or keep chatting and say "update" again.`,
+        kind: 'outline',
+        content: outlineToText(outline),
       })
       .returning();
 
     return NextResponse.json({
       assistant: saved,
-      regenerated: true,
-      rfqDocument: applied,
+      outline: true,
+      pendingOutline: outline,
       usage: { tokensUsed: result.tokensUsed, costUsd: result.costUsd },
     });
   } catch (error) {

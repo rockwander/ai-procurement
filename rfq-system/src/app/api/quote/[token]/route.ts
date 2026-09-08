@@ -29,6 +29,7 @@ export async function GET(
           normalizeRFQDocument(ctx.rfq.rfqDocument, {
             rfqId: ctx.rfq.id,
             buyer: '',
+            fillDefaults: false,
           })
         ).slice(0, 2000)
       : ctx.rfq.description;

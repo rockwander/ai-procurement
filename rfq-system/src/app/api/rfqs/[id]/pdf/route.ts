@@ -27,6 +27,7 @@ export async function GET(
     const doc = normalizeRFQDocument(rfq.rfqDocument, {
       rfqId: rfq.id,
       buyer: user.name,
+      fillDefaults: false,
     });
 
     const buffer = await generateRFQPDF({
