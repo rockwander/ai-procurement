@@ -5,17 +5,12 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
 import { RFQDocumentBuilder } from '@/components/RFQDocumentBuilder';
 import { OutlineReview } from '@/components/OutlineReview';
-import { Button, Card, Spinner, ErrorText, Badge } from '@/components/ui';
+import { Button, Card, Spinner, ErrorText } from '@/components/ui';
 import { api } from '@/lib/fetcher';
 import type { RFQDocument } from '@/lib/rfq-document';
 import type { RFQOutline } from '@/lib/rfq-outline';
 import { SUPPORTED_DOC_EXTENSIONS } from '@/lib/doc-types';
 
-interface Policy {
-  id: string;
-  title: string;
-  category: string;
-}
 type MsgKind = 'message' | 'update' | 'attachment' | 'outline' | 'apply';
 interface DraftMessage {
   id: string;
@@ -30,10 +25,7 @@ type View = 'pdf' | 'builder';
 export default function NewRFQPage() {
   const router = useRouter();
 
-  const [policies, setPolicies] = useState<Policy[]>([]);
-  const [selectedPolicies, setSelectedPolicies] = useState<string[]>([]);
   const [rfqId, setRfqId] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
 
   const [messages, setMessages] = useState<DraftMessage[]>([]);
   const [doc, setDoc] = useState<RFQDocument | null>(null);
@@ -56,41 +48,38 @@ export default function NewRFQPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api<{ policies: Policy[] }>('/api/policies')
-      .then((d) => setPolicies(d.policies))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, pendingOutline]);
 
-  async function startChat() {
-    setError('');
-    setStarting(true);
-    try {
-      const res = await api<{ rfq: { id: string; rfqDocument: RFQDocument } }>(
-        '/api/rfqs',
-        { method: 'POST', body: JSON.stringify({ policyIds: selectedPolicies }) }
-      );
-      setRfqId(res.rfq.id);
-      setDoc(res.rfq.rfqDocument);
-      setMessages([
-        {
-          id: 'seed',
-          role: 'assistant',
-          kind: 'message',
-          content:
-            'Attach your business requirements, policy or spec documents (or paste content) and describe what you need. When you\'re ready, hit "Build / update RFQ" and I\'ll propose an outline for you to confirm.',
-          attachmentName: null,
-        },
-      ]);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setStarting(false);
-    }
-  }
+  // Create the draft RFQ immediately — no policy-picker gate.
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    (async () => {
+      setError('');
+      try {
+        const res = await api<{ rfq: { id: string; rfqDocument: RFQDocument } }>(
+          '/api/rfqs',
+          { method: 'POST', body: JSON.stringify({}) }
+        );
+        setRfqId(res.rfq.id);
+        setDoc(res.rfq.rfqDocument);
+        setMessages([
+          {
+            id: 'seed',
+            role: 'assistant',
+            kind: 'message',
+            content:
+              'Attach your business requirements, policy or spec documents (or paste content) and describe what you need. When you\'re ready, hit "Build / update RFQ" and I\'ll propose an outline for you to confirm.',
+            attachmentName: null,
+          },
+        ]);
+      } catch (e: any) {
+        setError(e.message);
+      }
+    })();
+  }, []);
 
   async function send(action: 'message' | 'outline') {
     if (!rfqId || busy) return;
@@ -220,41 +209,12 @@ export default function NewRFQPage() {
   if (!rfqId) {
     return (
       <AppShell>
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Create RFQ</h1>
-        <p className="text-gray-500 mb-6 text-sm">
-          Pick any applicable policies, then start a conversation to build the RFQ.
-        </p>
-        {error && <div className="mb-4"><ErrorText>{error}</ErrorText></div>}
-        <Card className="p-5 max-w-lg space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Policy documents
-            </label>
-            <div className="space-y-1">
-              {policies.map((p) => (
-                <label key={p.id} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={selectedPolicies.includes(p.id)}
-                    onChange={(e) =>
-                      setSelectedPolicies((prev) =>
-                        e.target.checked ? [...prev, p.id] : prev.filter((id) => id !== p.id)
-                      )
-                    }
-                  />
-                  {p.title}
-                  <Badge color={p.category === 'general' ? 'gray' : 'blue'}>{p.category}</Badge>
-                </label>
-              ))}
-              {policies.length === 0 && (
-                <p className="text-sm text-gray-400">No policies loaded.</p>
-              )}
-            </div>
-          </div>
-          <Button onClick={startChat} disabled={starting}>
-            {starting ? 'Starting…' : 'Start building RFQ'}
-          </Button>
-        </Card>
+        <h1 className="text-2xl font-bold text-gray-900 mb-4">Create RFQ</h1>
+        {error ? (
+          <ErrorText>{error}</ErrorText>
+        ) : (
+          <Spinner label="Starting a new RFQ…" />
+        )}
       </AppShell>
     );
   }

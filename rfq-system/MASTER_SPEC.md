@@ -25,6 +25,8 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
 ## 2. Core Workflow (buyer)
 
 1. **Create RFQ** — conversational refinement loop
+   - **Entry.** Clicking **Create RFQ** goes straight to the chat — a draft
+     RFQ is created immediately. There is no policy-selection step.
    - **Inputs.** The buyer assembles inputs for the RFQ by any mix of:
      - attaching **multiple documents** (e.g. business requirements, policy
        documents — more than one of each is allowed), and
@@ -199,6 +201,16 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
+
+### 2026-09-08 — Create RFQ opens straight into the chat (no policy picker)
+
+**Refinement:** Clicking **Create RFQ** redirects straight to the create-RFQ
+chat, creating the draft RFQ immediately. The general-policy checkbox screen
+that used to precede it is removed — policies no longer apply as a
+pre-selection step. Any policy the RFQ needs is supplied as an attached
+document in the chat like any other input.
+
+**Affects:** Core Workflow step 1 (Create RFQ — entry).
 
 ### 2026-09-08 — Create RFQ: outline → confirm → apply on every (re)generation
 

@@ -21,6 +21,15 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-08 — Create RFQ opens straight into the chat (no policy picker)
+**Refinement:** Clicking "Create RFQ" should redirect directly to the
+create-RFQ chat page. The general-policy checkboxes that used to gate it are
+removed — they don't apply anymore. Any policy the RFQ needs is attached as
+a document in the chat like any other input.
+
+**Affects:** MASTER_SPEC §2 step 1 (Create RFQ — entry).
+**Status:** implemented
+
 ## 2026-09-08 — Create RFQ: outline → confirm → apply on every (re)generation
 **Refinement:** After the buyer supplies the relevant docs, the create-RFQ
 chat follows this flow, repeated on **every** (re)generation until save & exit:
