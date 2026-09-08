@@ -53,21 +53,15 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
         full content of every sub-heading in this step.
      2. **Review.** In the chat, the buyer can:
         - **untick** any sub-heading to exclude it from the RFQ;
-        - **click** a sub-heading to open its **already-drafted content**
-          and **edit it inline** — line-item rows, commercial field names /
-          types / mandatory flags, questionnaire questions, T&C text, header
-          fields — with the same controls as the form builder. These edits
-          are deterministic and make **no AI call**; they are applied with
-          the confirm button below.
-        - reply with changes ("drop MOQ", "add a GSM spec question") when the
-          buyer wants the agent to rethink a section from the source docs;
-          the agent posts a **revised outline** and the review restarts (one
-          AI call).
+        - **click** a sub-heading to see its **already-drafted content**
+          rendered in the chat (the line-item table, the exact questions,
+          the T&C text) — this shows drafted content, it does **not** make
+          a new AI call;
+        - reply with changes ("drop MOQ", "add a GSM spec question"); the
+          agent posts a **revised outline** and the review restarts.
      3. **Apply.** A **"Confirm & apply to RFQ"** button in the chat writes
-        the RFQ from the **ticked** sub-headings, including any inline edits
-        the buyer made in step 2 — regenerating both views (PDF + form
-        builder) and the derived supplier form schema, and storing a
-        snapshot.
+        the RFQ from the **ticked** sub-headings — regenerating both views
+        (PDF + form builder) and storing a snapshot.
 
    The buyer can keep chatting and go through outline → confirm → apply
    again to revise. The form builder remains available between rounds for
@@ -207,21 +201,6 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
-
-### 2026-09-08 — Outline review: edit section content inline (no AI call)
-
-**Refinement:** In the outline-review step, clicking a sub-heading now opens
-its drafted content as **editable fields** (line items, commercial fields,
-questionnaire questions, T&C text, header) — same controls as the form
-builder. The buyer edits directly instead of having to describe every change
-in a chat message and rebuild. These edits are deterministic and cost **zero
-tokens**; "Confirm & apply" writes them (plus the ticks) straight to the RFQ
-document, which re-derives the PDF, the form builder view, and the supplier
-form schema. Replying with a message + "Rebuild outline" is still there for
-when the buyer wants the agent to rethink a section from the source docs.
-
-**Affects:** Core Workflow step 1 (Create RFQ — outline review); no agent
-change.
 
 ### 2026-09-08 — Create RFQ opens straight into the chat (no policy picker)
 

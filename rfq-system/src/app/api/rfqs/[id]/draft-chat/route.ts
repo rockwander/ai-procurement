@@ -74,11 +74,10 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { message, action, tickedSectionIds, editedDocument } = body as {
+    const { message, action, tickedSectionIds } = body as {
       message?: string;
       action?: 'message' | 'outline' | 'apply';
       tickedSectionIds?: string[];
-      editedDocument?: RFQDocument;
     };
     const text = sanitizeText(message ?? '');
 
@@ -89,14 +88,8 @@ export async function POST(
         return badRequest('There is no outline to apply. Ask me to build the RFQ first.');
       }
       const ticked = new Set(tickedSectionIds ?? outline.sections.map((s) => s.id));
-      // The buyer may have edited section content in the outline review. Trust
-      // the edited document (deterministic, no AI) but keep the drafting agent's
-      // id so it stays stable across rounds.
-      const baseDoc = editedDocument
-        ? { ...editedDocument, header: { ...editedDocument.header, rfqId: outline.document.header.rfqId } }
-        : outline.document;
       const withTicks: RFQOutline = {
-        document: baseDoc,
+        document: outline.document,
         sections: outline.sections.map((s) => ({ ...s, ticked: ticked.has(s.id) })),
       };
       const doc = documentFromOutline(withTicks);

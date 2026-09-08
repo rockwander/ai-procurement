@@ -21,20 +21,6 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
-## 2026-09-08 — Outline review: edit section content inline (no AI call)
-**Refinement:** In the draft-doc / outline-review step, clicking a
-sub-heading opens its drafted content as **editable fields** (line items,
-commercial fields, questionnaire questions, T&C text, header) — same controls
-as the form builder — so the buyer edits directly instead of describing every
-change in a chat message. This is deterministic and costs **zero tokens**;
-"Confirm & apply" writes the edits (plus ticks) to the RFQ document, which
-re-derives the PDF, form builder view, and supplier form schema. The
-message + "Rebuild outline" path stays for when the agent should rethink a
-section from the source docs.
-
-**Affects:** MASTER_SPEC §2 step 1 (Create RFQ — outline review).
-**Status:** implemented
-
 ## 2026-09-08 — Create RFQ opens straight into the chat (no policy picker)
 **Refinement:** Clicking "Create RFQ" should redirect directly to the
 create-RFQ chat page. The general-policy checkboxes that used to gate it are
