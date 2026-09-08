@@ -81,9 +81,15 @@ export function buildOutline(
   const wasTicked = (
     kind: OutlineSection['kind'],
     heading: string,
+    hasContent: boolean,
     termIndex?: number
   ): boolean => {
-    if (excludedSet.has(heading.toLowerCase())) return false;
+    if (excludedSet.has(heading.toLowerCase())) {
+      // The buyer excluded this before. If the agent drafted content for it
+      // this round, the buyer asked for it back — tick it. Otherwise keep it
+      // excluded.
+      return hasContent;
+    }
     if (!prev) return true;
     const match = prev.sections.find(
       (s) => s.kind === kind && s.termIndex === termIndex
@@ -100,7 +106,7 @@ export function buildOutline(
     heading: 'Line items',
     summary: `${doc.lineItems.length} item(s) to be quoted`,
     detail: lineItemDetail(doc.lineItems),
-    ticked: wasTicked('lineItems', 'Line items'),
+    ticked: wasTicked('lineItems', 'Line items', doc.lineItems.length > 0),
     kind: 'lineItems',
   });
   sections.push({
@@ -109,7 +115,7 @@ export function buildOutline(
     heading: 'Commercial information requested',
     summary: `${doc.commercialFields.length} field(s) per line item`,
     detail: commercialDetail(doc.commercialFields),
-    ticked: wasTicked('commercialFields', 'Commercial information requested'),
+    ticked: wasTicked('commercialFields', 'Commercial information requested', doc.commercialFields.length > 0),
     kind: 'commercialFields',
   });
   sections.push({
@@ -118,7 +124,7 @@ export function buildOutline(
     heading: 'Quality questionnaire',
     summary: `${doc.questionnaire.length} question(s)`,
     detail: questionnaireDetail(doc.questionnaire),
-    ticked: wasTicked('questionnaire', 'Quality questionnaire'),
+    ticked: wasTicked('questionnaire', 'Quality questionnaire', doc.questionnaire.length > 0),
     kind: 'questionnaire',
   });
   sections.push({
@@ -127,7 +133,7 @@ export function buildOutline(
     heading: 'Supporting documents',
     summary: 'Certificates / documents the supplier should attach',
     detail: [doc.supportingDocsNote || 'Upload certificates / relevant documents.'],
-    ticked: wasTicked('supportingDocs', 'Supporting documents'),
+    ticked: wasTicked('supportingDocs', 'Supporting documents', !!doc.supportingDocsNote),
     kind: 'supportingDocs',
   });
 
@@ -145,7 +151,7 @@ export function buildOutline(
       `Currency: ${h.currency || '—'}`,
       `Validity: ${h.validity || '—'}`,
     ],
-    ticked: wasTicked('header', 'Scope & header'),
+    ticked: wasTicked('header', 'Scope & header', true),
     kind: 'header',
   });
   doc.termsAndConditions.forEach((t, i) => {
@@ -156,7 +162,7 @@ export function buildOutline(
       heading,
       summary: 'Term / condition',
       detail: [t],
-      ticked: wasTicked('term', heading, i),
+      ticked: wasTicked('term', heading, true, i),
       kind: 'term',
       termIndex: i,
     });

@@ -213,7 +213,17 @@ export async function POST(
     }
 
     const outline = result.data;
-    await db.update(rfqs).set({ pendingOutline: outline }).where(eq(rfqs.id, id));
+    // A previously-excluded section that the agent re-added (because the buyer
+    // asked) comes back ticked — drop it from the persisted exclusion list.
+    const stillExcluded = excludedSections.filter((h) =>
+      outline.sections.some(
+        (s) => s.heading.toLowerCase() === h.toLowerCase() && !s.ticked
+      )
+    );
+    await db
+      .update(rfqs)
+      .set({ pendingOutline: outline, excludedSections: stillExcluded })
+      .where(eq(rfqs.id, id));
 
     const [saved] = await db
       .insert(rfqDraftMessages)
