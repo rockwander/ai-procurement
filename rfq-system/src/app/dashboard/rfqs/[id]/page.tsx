@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
 import { SupplierPicker } from '@/components/SupplierPicker';
 import { Button, Card, StatusBadge, Spinner, ErrorText, Badge } from '@/components/ui';
@@ -20,12 +20,14 @@ interface Invitation {
 
 export default function RFQDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [rfq, setRfq] = useState<any>(null);
   const [lineItems, setLineItems] = useState<any[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [remindingId, setRemindingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadRfq = useCallback(async () => {
     const d = await api<{ rfq: any; lineItems: any[] }>(`/api/rfqs/${id}`);
@@ -57,6 +59,30 @@ export default function RFQDetailPage() {
     }
   }
 
+  async function deleteRfq() {
+    const submitted = invitations.filter((i) => i.status === 'submitted').length;
+    const hint =
+      submitted > 0
+        ? `\n\nThis will also delete ${submitted} submitted quote${
+            submitted > 1 ? 's' : ''
+          } and any purchase order.`
+        : invitations.length > 0
+        ? `\n\nThis will also delete ${invitations.length} supplier invitation${
+            invitations.length > 1 ? 's' : ''
+          }.`
+        : '';
+    if (!confirm(`Delete "${rfq.title}"? This cannot be undone.${hint}`)) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await api(`/api/rfqs/${id}`, { method: 'DELETE' });
+      router.push('/dashboard/rfqs');
+    } catch (e: any) {
+      setError(e.message);
+      setDeleting(false);
+    }
+  }
+
   if (loading) {
     return (
       <AppShell>
@@ -77,9 +103,18 @@ export default function RFQDetailPage() {
 
   return (
     <AppShell>
-      <div className="flex items-start justify-between mb-3">
+      <div className="flex items-start justify-between mb-3 gap-3">
         <h1 className="text-2xl font-bold text-gray-900">{rfq.title}</h1>
-        <StatusBadge status={rfq.status} />
+        <div className="flex items-center gap-3">
+          <StatusBadge status={rfq.status} />
+          <button
+            onClick={deleteRfq}
+            disabled={deleting}
+            className="text-sm text-red-600 hover:underline disabled:opacity-50"
+          >
+            {deleting ? 'Deleting…' : 'Delete RFQ'}
+          </button>
+        </div>
       </div>
 
       {rfq.hasContent && (

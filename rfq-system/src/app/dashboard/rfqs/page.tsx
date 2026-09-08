@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/AppShell';
-import { Button, Card, StatusBadge, Spinner } from '@/components/ui';
+import { Button, Card, StatusBadge, Spinner, ErrorText } from '@/components/ui';
 import { api } from '@/lib/fetcher';
 
 interface RFQRow {
@@ -19,12 +19,40 @@ interface RFQRow {
 export default function RFQListPage() {
   const [rows, setRows] = useState<RFQRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     api<{ rfqs: RFQRow[] }>('/api/rfqs')
       .then((d) => setRows(d.rfqs))
+      .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  async function remove(r: RFQRow) {
+    const hint =
+      r.submittedCount > 0
+        ? `\n\nThis will also delete ${r.submittedCount} submitted quote${
+            r.submittedCount > 1 ? 's' : ''
+          } and any purchase order.`
+        : r.invitationCount > 0
+        ? `\n\nThis will also delete ${r.invitationCount} supplier invitation${
+            r.invitationCount > 1 ? 's' : ''
+          }.`
+        : '';
+    if (!confirm(`Delete "${r.title}"? This cannot be undone.${hint}`)) return;
+
+    setDeletingId(r.id);
+    setError('');
+    try {
+      await api(`/api/rfqs/${r.id}`, { method: 'DELETE' });
+      setRows((prev) => prev.filter((x) => x.id !== r.id));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <AppShell>
@@ -34,6 +62,8 @@ export default function RFQListPage() {
           <Button>+ Create RFQ</Button>
         </Link>
       </div>
+
+      {error && <div className="mb-4"><ErrorText>{error}</ErrorText></div>}
 
       {loading ? (
         <Spinner label="Loading RFQs…" />
@@ -72,13 +102,20 @@ export default function RFQListPage() {
                   <td className="px-4 py-3 text-gray-600">
                     {r.deadline ? new Date(r.deadline).toLocaleDateString() : '—'}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
                     <Link
                       href={`/dashboard/rfqs/${r.id}`}
                       className="text-blue-600 hover:underline"
                     >
                       Open
                     </Link>
+                    <button
+                      onClick={() => remove(r)}
+                      disabled={deletingId === r.id}
+                      className="text-red-600 hover:underline ml-4 disabled:opacity-50"
+                    >
+                      {deletingId === r.id ? 'Deleting…' : 'Delete'}
+                    </button>
                   </td>
                 </tr>
               ))}
