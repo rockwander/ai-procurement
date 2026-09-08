@@ -12,12 +12,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [name, setName] = useState('');
 
   useEffect(() => {
-    api<{ user: { name: string } }>('/api/auth/me')
-      .then((d) => {
+    (async () => {
+      try {
+        const d = await api<{ user: { name: string } }>('/api/auth/me');
         setName(d.user.name);
         setReady(true);
-      })
-      .catch(() => router.replace('/login'));
+        return;
+      } catch {
+        // No session — try POC auto-login before bouncing to /login.
+        const auto = await fetch('/api/auth/dev-login', { method: 'POST' });
+        if (auto.ok) {
+          const d = await auto.json();
+          setName(d.user?.name ?? '');
+          setReady(true);
+          return;
+        }
+        router.replace('/login');
+      }
+    })();
   }, [router]);
 
   async function logout() {

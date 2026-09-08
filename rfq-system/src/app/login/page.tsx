@@ -1,59 +1,65 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('admin@procurement.ai');
+  const [password, setPassword] = useState('admin123');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
+
+  // POC: if auto-login is enabled, skip the form entirely.
+  useEffect(() => {
+    (async () => {
+      const me = await fetch('/api/auth/me');
+      if (me.ok) return router.replace('/dashboard');
+      const auto = await fetch('/api/auth/dev-login', { method: 'POST' });
+      if (auto.ok) return router.replace('/dashboard');
+      setChecking(false);
+    })();
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-
       const data = await response.json();
-
       if (!response.ok) {
         setError(data.error || 'Login failed');
         setLoading(false);
         return;
       }
-
-      // Store user data in localStorage
       localStorage.setItem('user', JSON.stringify(data.user));
-
-      // Redirect based on role
-      if (data.user.role === 'procurement') {
-        router.push('/dashboard');
-      } else {
-        router.push('/supplier/dashboard');
-      }
-    } catch (error) {
+      router.push('/dashboard');
+    } catch {
       setError('An error occurred. Please try again.');
       setLoading(false);
     }
   };
+
+  if (checking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-gray-500">
+        Signing you in…
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="max-w-md w-full mx-4">
         <div className="bg-white rounded-lg shadow-xl p-8">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              Procurement Portal
-            </h1>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Procurement Portal</h1>
             <p className="text-gray-600">Sign in to your account</p>
           </div>
 
@@ -75,7 +81,6 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="admin@procurement.ai"
               />
             </div>
 
@@ -90,7 +95,6 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="••••••••"
               />
             </div>
 
@@ -104,14 +108,8 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-6 text-center text-sm text-gray-600">
-            <p>Demo credentials:</p>
+            <p>Demo credentials (pre-filled):</p>
             <p className="font-mono text-xs mt-1">admin@procurement.ai / admin123</p>
-          </div>
-
-          <div className="mt-6 text-center">
-            <Link href="/" className="text-sm text-blue-600 hover:text-blue-700">
-              ← Back to home
-            </Link>
           </div>
         </div>
       </div>
