@@ -33,11 +33,37 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
      documents / pasted content / instructions across multiple turns,
      refining the inputs continuously. The system does **not** regenerate
      the RFQ on every message.
-   - **Explicit update.** Only when the buyer explicitly says **"update"**
-     does the **Drafting Agent** take the whole thread so far (all attached
-     documents, all pasted content, all instructions) and (re)generate the
-     RFQ. The buyer can continue the conversation and say "update" again to
-     revise.
+
+   - **Outline → confirm → apply.** Every (re)generation of the RFQ goes
+     through the same three steps — the first time and every time after,
+     until the buyer saves and exits:
+     1. **Outline.** When the buyer asks to build / update the RFQ (or on
+        the first message that carries substance), the **Drafting Agent**
+        reads the whole thread and replies in the chat with a **proposed
+        outline** — not a regenerated RFQ. The outline has two groups:
+        - **Supplier must provide** (the Quotation) — sub-headings such as
+          *Line items*, *Commercial information requested*, *Quality
+          questionnaire*, *Supporting documents*.
+        - **Buyer provides** (Terms & scope) — sub-headings such as *Scope
+          & instructions*, *Delivery*, *Payment terms*, *Quote validity*,
+          *Warranty / replacement*, *Taxes & freight*, *Penalties*.
+        Each sub-heading is **ticked by default**. The agent drafts the
+        full content of every sub-heading in this step.
+     2. **Review.** In the chat, the buyer can:
+        - **untick** any sub-heading to exclude it from the RFQ;
+        - **click** a sub-heading to see its **already-drafted content**
+          rendered in the chat (the line-item table, the exact questions,
+          the T&C text) — this shows drafted content, it does **not** make
+          a new AI call;
+        - reply with changes ("drop MOQ", "add a GSM spec question"); the
+          agent posts a **revised outline** and the review restarts.
+     3. **Apply.** A **"Confirm & apply to RFQ"** button in the chat writes
+        the RFQ from the **ticked** sub-headings — regenerating both views
+        (PDF + form builder) and storing a snapshot.
+
+   The buyer can keep chatting and go through outline → confirm → apply
+   again to revise. The form builder remains available between rounds for
+   direct edits (below).
    - **RFQ = two synchronized views of one artifact:**
      1. a **PDF document** (the human-readable RFQ — see structure below), and
      2. a **single-column form builder** representing the same RFQ.
@@ -79,13 +105,15 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
        the same supplier-facing preview.
      - **Header** and **Terms & conditions** — editable text.
    - **Direct edits in the form builder apply immediately** to the RFQ and
-     re-render the PDF — no AI call. The chat **"update"** is only for AI
-     regeneration from the thread. Both paths keep the two views in sync.
+     re-render the PDF — no AI call. The chat path (outline → confirm →
+     apply) is the only AI regeneration. Both paths keep the two views in
+     sync.
 
    **Persistence.** A draft RFQ row is created as soon as the buyer starts
    the chat. The full chat thread (messages + attached-document text +
-   pasted content) is stored against it, and each **"update"** stores a new
-   RFQ snapshot (history kept). Nothing is sent to suppliers until step 3.
+   pasted content + proposed outlines) is stored against it, and each
+   **apply** stores a new RFQ snapshot (history kept). Nothing is sent to
+   suppliers until step 3.
 
    **Document handling.** The chat accepts pasted text and file uploads of
    **.txt / .md / .csv / .pdf / .docx**. Uploaded files are parsed to text
@@ -136,10 +164,10 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
 
 | Agent | Role | Model |
 |-------|------|-------|
-| Drafting | Whole create-RFQ thread (messages + attached/pasted docs) → structured RFQ document | `gemini-flash-latest` (fallback `gemini-2.5-flash`) |
-| Pre-Filtering | Category filter → ranked suppliers with summaries | `gemini-flash-latest` |
+| Drafting | Whole create-RFQ thread → **proposed outline** (2 groups, ticked sub-headings, drafted content per heading), then the structured RFQ document on **apply** | `gemini-flash-latest` (fallback `gemini-2.5-flash`) |
+| Pre-Filtering | Category filter → ranked suppliers with summaries | `gemini-flash-lite-latest` (fallback `gemini-2.5-flash`) |
 | Quote Evaluation | NL strategy + quotes → award split + reasoning | `gemini-flash-latest` |
-| Autofill | Supplier documents / chat → extracted form values | `gemini-flash-latest` |
+| Autofill | Supplier documents / chat → extracted form values (coerced to the fixed form) | `gemini-flash-latest` |
 
 The supplier quote-form schema is **derived deterministically** from the RFQ
 document (`rfqDocumentToFormSchema`), not generated by an agent.
@@ -166,6 +194,44 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
+
+### 2026-09-08 — Create RFQ: outline → confirm → apply on every (re)generation
+
+**Refinement:** Once the buyer supplies the relevant documents, the
+create-RFQ chat follows a fixed flow, repeated on **every** (re)generation
+until the buyer saves and exits:
+
+1. Buyer attaches docs / pastes content / gives context.
+2. The system replies in the chat with a **proposed outline** — a
+   confirmation of what will go into the RFQ, not a regenerated RFQ. It is
+   split into two groups:
+   - **Supplier must provide** (Quotation) — sub-headings: line items,
+     commercial information requested, quality questionnaire, supporting
+     documents.
+   - **Buyer provides** (Terms & scope) — sub-headings: scope &
+     instructions, delivery, payment terms, quote validity, warranty /
+     replacement, taxes & freight, penalties.
+3. Every sub-heading is **ticked by default**; the buyer can **untick** any
+   to exclude it. The buyer can **click a sub-heading** to see its
+   **already-drafted content** in the chat (line-item table, exact
+   questions, T&C text) — this shows drafted content, no new AI call. The
+   buyer can also reply with changes and get a revised outline.
+4. A **"Confirm & apply to RFQ"** button in the chat regenerates the RFQ
+   (synced PDF + form builder) from the **ticked** sub-headings.
+
+**Affects:** Core Workflow step 1 (Create RFQ); Drafting Agent (now emits
+an outline stage before the document); persistence (outlines stored in the
+thread).
+
+**Design decisions (product owner):**
+- The outline-confirm flow repeats on every regeneration, not just the
+  first.
+- Sub-headings are ticked by default; unticking excludes a section.
+- Clicking a heading shows content drafted in the outline step — never a
+  fresh Gemini call.
+- Group labels: "Supplier must provide" and "Buyer provides".
+
+**Status:** in spec
 
 ### 2026-09-08 — Find & invite suppliers: show all first, filter/select inline
 

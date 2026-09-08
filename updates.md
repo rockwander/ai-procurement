@@ -21,6 +21,35 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-08 — Create RFQ: outline → confirm → apply on every (re)generation
+**Refinement:** After the buyer supplies the relevant docs, the create-RFQ
+chat follows this flow, repeated on **every** (re)generation until save & exit:
+1. Buyer attaches docs / pastes content / gives context.
+2. System replies in the chat with a **proposed outline** (not a regenerated
+   RFQ), split into two groups:
+   - **Supplier must provide** (Quotation): line items, commercial information
+     requested, quality questionnaire, supporting documents.
+   - **Buyer provides** (Terms & scope): scope & instructions, delivery,
+     payment terms, quote validity, warranty/replacement, taxes & freight,
+     penalties.
+3. Sub-headings are **ticked by default**; buyer can untick to exclude. Buyer
+   can **click a sub-heading** to see its already-drafted content in the chat
+   (line-item table, exact questions, T&C text) — no new AI call. Buyer can
+   also reply with changes → revised outline.
+4. A **"Confirm & apply to RFQ"** button in the chat regenerates the RFQ
+   (synced PDF + form builder) from the ticked sub-headings.
+
+**Affects:** MASTER_SPEC §2 step 1 (Create RFQ); Drafting Agent (adds an
+outline stage before the document).
+**Status:** in spec
+
+**Design decisions (product owner):**
+- Outline-confirm flow repeats on every regeneration, not just the first.
+- Sub-headings ticked by default; unticking excludes a section.
+- Clicking a heading shows content drafted in the outline step — never a
+  fresh Gemini call.
+- Group labels: "Supplier must provide" / "Buyer provides".
+
 ## 2026-09-08 — Find & invite suppliers: show all first, filter/select inline
 **Refinement:** Under "Find & invite suppliers", list **all suppliers
 immediately**. The buyer can apply the existing filters (category, min
