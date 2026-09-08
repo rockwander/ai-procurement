@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
 import { RFQDocumentBuilder } from '@/components/RFQDocumentBuilder';
 import { OutlineReview } from '@/components/OutlineReview';
-import { Button, Card, Spinner, ErrorText } from '@/components/ui';
+import { Button, Card, Spinner, ErrorText, PaperclipIcon, SendIcon } from '@/components/ui';
 import { api } from '@/lib/fetcher';
 import type { RFQDocument } from '@/lib/rfq-document';
 import type { RFQOutline } from '@/lib/rfq-outline';
@@ -454,42 +454,5 @@ export default function NewRFQPage() {
         </Card>
       </div>
     </AppShell>
-  );
-}
-
-function PaperclipIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 6.34l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-    </svg>
-  );
-}
-
-function SendIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m22 2-7 20-4-9-9-4Z" />
-      <path d="M22 2 11 13" />
-    </svg>
   );
 }

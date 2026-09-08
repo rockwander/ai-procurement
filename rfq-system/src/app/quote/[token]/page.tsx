@@ -186,20 +186,22 @@ export default function SupplierQuotePage() {
         </div>
 
         <div className="lg:col-span-1">
-          <QuoteChat
-            token={token}
-            currentFormData={value.formData}
-            currentLinePrices={value.lineItemPrices}
-            disabled={!!locked}
-            onApply={(payload: ChatApplyPayload) => {
-              setValue((prev) => ({
-                ...prev,
-                formData: { ...prev.formData, ...payload.fields },
-                lineItemPrices: { ...prev.lineItemPrices, ...payload.lineItemPrices },
-              }));
-              setAiNotes((prev) => ({ ...prev, ...payload.notes }));
-            }}
-          />
+          <div className="lg:sticky lg:top-6">
+            <QuoteChat
+              token={token}
+              currentFormData={value.formData}
+              currentLinePrices={value.lineItemPrices}
+              disabled={!!locked}
+              onApply={(payload: ChatApplyPayload) => {
+                setValue((prev) => ({
+                  ...prev,
+                  formData: { ...prev.formData, ...payload.fields },
+                  lineItemPrices: { ...prev.lineItemPrices, ...payload.lineItemPrices },
+                }));
+                setAiNotes((prev) => ({ ...prev, ...payload.notes }));
+              }}
+            />
+          </div>
         </div>
       </div>
     </div>

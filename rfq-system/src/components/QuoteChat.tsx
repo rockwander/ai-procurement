@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { Button } from '@/components/ui';
+import { PaperclipIcon, SendIcon } from '@/components/ui';
 import { api } from '@/lib/fetcher';
 import { SUPPORTED_DOC_EXTENSIONS } from '@/lib/doc-types';
 
@@ -54,22 +54,26 @@ export function QuoteChat({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  async function addFile(file: File) {
+  async function addFiles(files: FileList | File[]) {
+    const list = Array.from(files);
+    if (list.length === 0) return;
     setUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch(`/api/quote/${token}/extract`, { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not read that file');
-      setAttachments((a) => [...a, data as Attachment]);
-    } catch (e: any) {
-      setMessages((m) => [...m, { role: 'assistant', content: `Error: ${e.message}` }]);
-    } finally {
-      setUploading(false);
+    for (const file of list) {
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`/api/quote/${token}/extract`, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Could not read ${file.name}`);
+        setAttachments((a) => [...a, data as Attachment]);
+      } catch (e: any) {
+        setMessages((m) => [...m, { role: 'assistant', content: `Error: ${e.message}` }]);
+      }
     }
+    setUploading(false);
   }
 
   async function send() {
@@ -143,23 +147,23 @@ export function QuoteChat({
       {!disabled && (
         <div className="border-t border-gray-200 p-3 space-y-2">
           {attachments.length > 0 && (
-            <div className="space-y-1">
+            <div className="flex flex-wrap gap-1.5">
               {attachments.map((a, i) => (
-                <div
+                <span
                   key={i}
-                  className="text-xs text-gray-600 bg-gray-50 rounded p-2 flex justify-between"
+                  className="inline-flex items-center gap-1 text-xs text-gray-700 bg-gray-100 rounded-full pl-2 pr-1 py-0.5"
                 >
-                  <span>
-                    {a.name} · {a.chars.toLocaleString()} chars
-                    {a.truncated ? ' (truncated)' : ''}
-                  </span>
+                  <PaperclipIcon className="w-3 h-3 text-gray-400" />
+                  <span className="max-w-[140px] truncate">{a.name}</span>
+                  {a.truncated && <span className="text-gray-400">(clipped)</span>}
                   <button
                     onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                    className="text-red-500"
+                    className="text-gray-400 hover:text-red-600 text-sm leading-none px-0.5"
+                    aria-label={`Remove ${a.name}`}
                   >
-                    remove
+                    ×
                   </button>
-                </div>
+                </span>
               ))}
             </div>
           )}
@@ -167,39 +171,65 @@ export function QuoteChat({
             ref={fileRef}
             type="file"
             accept={SUPPORTED_DOC_EXTENSIONS.join(',')}
+            multiple
             className="hidden"
             onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) addFile(f);
+              if (e.target.files?.length) addFiles(e.target.files);
               e.target.value = '';
             }}
           />
-          <textarea
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            rows={2}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask a question or paste details…"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send();
+
+          <div
+            className={`relative rounded-lg border ${
+              dragOver ? 'border-blue-400 bg-blue-50/40' : 'border-gray-300'
+            }`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
             }}
-          />
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => fileRef.current?.click()}
-              disabled={uploading}
-            >
-              {uploading ? 'Reading…' : 'Attach document'}
-            </Button>
-            <Button size="sm" onClick={send} disabled={busy}>
-              Send
-            </Button>
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
+            }}
+          >
+            <textarea
+              className="w-full resize-none bg-transparent px-3 pt-2 pb-9 text-sm focus:outline-none"
+              rows={3}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask a question or paste details…  Attach docs with the clip."
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send();
+              }}
+            />
+            <div className="absolute inset-x-2 bottom-1.5 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                title="Attach documents"
+                className="flex items-center gap-1 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+              >
+                <PaperclipIcon className="w-4 h-4" />
+                {uploading && <span className="text-xs">reading…</span>}
+              </button>
+              <button
+                type="button"
+                onClick={send}
+                disabled={busy || (!input.trim() && attachments.length === 0)}
+                title="Send (Cmd/Ctrl+Enter)"
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
+              >
+                <SendIcon />
+              </button>
+            </div>
           </div>
+
           <p className="text-[11px] text-gray-400">
-            Accepts {SUPPORTED_DOC_EXTENSIONS.join(', ')}. Nothing is stored except the
-            text.
+            Accepts {SUPPORTED_DOC_EXTENSIONS.join(', ')} — multiple at once. Nothing is
+            stored except the text.
           </p>
         </div>
       )}
