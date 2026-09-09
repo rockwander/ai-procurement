@@ -21,6 +21,52 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-09 — Supplier responds via a document preview, not a form
+**Refinement:** The supplier side of an RFQ is a **chat + live document
+preview**, not a form to fill. The supplier talks to the Autofill Agent and/or
+attaches documents; a preview of their quotation fills in as they go. Data is
+still captured into the **fixed per-line table** (see the entry below) plus a
+free-text **notes** area — the preview is only a presentation layer over that
+table.
+
+- **Two panes:** chat (left), document preview (right), notes area (below).
+- **Colour = confidence**, per filled field: normal (high / supplier-confirmed),
+  **amber** (AI-filled at medium/low confidence, *or* a defaulted assumption not
+  yet corroborated), grey (optional field left blank). Every amber field carries
+  a **rationale** pinned to it ("Assumed INR — RFQ currency, not stated in your
+  docs"). Colour never means "blocking".
+- **"Needs attention" list** (separate signal): a prominent, persistent panel
+  with a warning icon and count, listing every **mandatory** field with **no
+  value** — line-item blocking fields (`canSupply`, `unitPrice`, `currency`,
+  `quotedUom`, minus any line marked `canSupply = no`), buyer-required
+  quote-level fields, and buyer-required questionnaire items. Submit is blocked
+  while it is non-empty.
+- **System-inferred fields** — `canSupply`, `currency`, `quotedUom`,
+  `availableQty` — are AI-defaulted; the supplier normally types nothing for
+  them. `unitPrice` is always supplier-sourced; `leadTimeDays` / `moq` only when
+  the buyer marked them required.
+- **Highlight ↔ chat scoping:** clicking a preview highlight or a "needs
+  attention" entry scrolls+rings the field, sets it as the **active chat
+  context** (composer shows a chip "↳ Line 7 — unit of measure"), and focuses
+  the composer. Typed text / attached docs are then understood as input for
+  that field.
+- **Preview is a templated rendering of the fixed table** — each field a tagged
+  element (`data-field="line:<id>:unitPrice"`); *not* a free-form document with
+  AI-returned character offsets.
+- **Per-field rationale ≠ notes.** Rationale is structured provenance pinned to
+  the field. Notes is a free-text area for supplier caveats the buyer should
+  read.
+- **Out of scope:** retiring the *buyer-side* RFQ form builder (same pattern,
+  mirrored — later, separate change); FX conversion.
+
+Full requirement: `rfq-system/REQUIREMENT_supplier-doc-preview.md`.
+
+**Affects:** MASTER_SPEC §3 (Supplier Flow) — replaces the form-fill interaction;
+Autofill Agent (adds per-field `confidence` + `rationale`); supplier
+`/quote/[token]` UI; `line-response.ts` (adds `missingMandatory` + defaulting
+helpers). No change to the buyer-side comparison / evaluation — same fixed table.
+**Status:** in spec
+
 ## 2026-09-09 — Per-line supplier response is a fixed schema, not buyer-defined
 **Refinement:** The fields a supplier fills **for each line item** are a fixed,
 typed structure — the same on every RFQ — not something the buyer defines,
