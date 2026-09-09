@@ -208,6 +208,28 @@ export function buildColumns(
   return cols;
 }
 
+export type ColumnTab = 'lineitems' | 'questionnaire';
+
+/**
+ * Which tab a column shows under in the comparison view.
+ * Line-items tab: the commercial picture — supplier, totals, per-line price &
+ * coverage. Questionnaire tab: the buyer's custom questions (Notes is rendered
+ * separately as flagged bullets, not as a column).
+ */
+export function columnTab(col: ColumnDef): ColumnTab {
+  return col.group === 'questionnaire' ? 'questionnaire' : 'lineitems';
+}
+
+/** Columns to render for a given tab, in their natural order. */
+export function columnsForTab(columns: ColumnDef[], tab: ColumnTab): ColumnDef[] {
+  if (tab === 'questionnaire') {
+    // keep supplier as an anchor so rows are identifiable
+    const anchor = columns.filter((c) => c.key === 'supplierName');
+    return [...anchor, ...columns.filter((c) => c.group === 'questionnaire')];
+  }
+  return columns.filter((c) => c.group !== 'questionnaire' && c.key !== 'notes');
+}
+
 export type FilterOp = 'contains' | 'eq' | 'lt' | 'gt';
 
 export interface Filter {
