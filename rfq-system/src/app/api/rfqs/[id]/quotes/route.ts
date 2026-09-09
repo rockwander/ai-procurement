@@ -47,6 +47,7 @@ export async function GET(
       invitationId: r.invitation.id,
       supplierId: r.supplier.id,
       supplierName: r.supplier.companyName,
+      token: r.invitation.token,
       status: r.invitation.status,
       remindersSent: r.invitation.remindersSent ?? 0,
       submittedAt: r.submission?.submittedAt ?? null,

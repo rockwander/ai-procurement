@@ -12,6 +12,7 @@ interface Invitation {
   invitationId: string;
   supplierId: string;
   supplierName: string;
+  token: string;
   status: string;
   remindersSent: number;
   submittedAt: string | null;
@@ -26,6 +27,7 @@ export default function RFQDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [remindingId, setRemindingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const loadRfq = useCallback(async () => {
@@ -55,6 +57,18 @@ export default function RFQDetailPage() {
     } finally {
       setRemindingId(null);
     }
+  }
+
+  async function copyLink(inv: Invitation) {
+    const url = `${window.location.origin}/quote/${inv.token}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      window.prompt('Copy this supplier link:', url);
+      return;
+    }
+    setCopiedId(inv.invitationId);
+    setTimeout(() => setCopiedId((c) => (c === inv.invitationId ? null : c)), 2000);
   }
 
   async function deleteRfq() {
@@ -172,18 +186,26 @@ export default function RFQDetailPage() {
                         </span>
                       )}
                     </div>
-                    {inv.status !== 'submitted' && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => sendReminder(inv.invitationId)}
-                        disabled={remindingId === inv.invitationId}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => copyLink(inv)}
+                        className="text-xs text-blue-600 hover:underline"
                       >
-                        {remindingId === inv.invitationId
-                          ? 'Sending…'
-                          : 'Send reminder'}
-                      </Button>
-                    )}
+                        {copiedId === inv.invitationId ? 'Copied!' : 'Copy link'}
+                      </button>
+                      {inv.status !== 'submitted' && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => sendReminder(inv.invitationId)}
+                          disabled={remindingId === inv.invitationId}
+                        >
+                          {remindingId === inv.invitationId
+                            ? 'Sending…'
+                            : 'Send reminder'}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
