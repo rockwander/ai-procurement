@@ -18,6 +18,7 @@ import {
   coverageForLine,
   type FieldState,
   type ProvenanceMap,
+  type QuoteException,
 } from '@/lib/line-response-status';
 
 export interface LineItemInput {
@@ -38,6 +39,16 @@ export interface ActiveField {
   label: string;
 }
 
+export interface PassageRef {
+  id: string; // `passage:<slug>`
+  label: string;
+  text: string;
+}
+
+function passageId(slug: string): string {
+  return `passage:${slug}`;
+}
+
 /**
  * The supplier's quotation rendered as a DOCUMENT they are drafting — a
  * quotation letter in response to the RFQ, not a form. Values are plain text
@@ -54,24 +65,34 @@ export function QuotePreview({
   schema,
   lineItems,
   rfqCurrency,
+  rfqTerms = [],
+  rfqHeader,
   value,
   provenance,
+  exceptions,
   activeFieldId,
   onChange,
   onConfirmField,
   onActivateField,
+  onActivatePassage,
+  onRemoveException,
   disabled,
 }: {
   buyerTitle: string;
   schema: FormSchema;
   lineItems: LineItemInput[];
   rfqCurrency: string;
+  rfqTerms?: string[];
+  rfqHeader?: { buyer: string; expectedDelivery: string; validity: string };
   value: QuoteFormValue;
   provenance: ProvenanceMap;
+  exceptions: QuoteException[];
   activeFieldId?: string | null;
   onChange: (v: QuoteFormValue) => void;
   onConfirmField: (targetId: string) => void;
   onActivateField: (f: ActiveField | null) => void;
+  onActivatePassage: (p: PassageRef) => void;
+  onRemoveException: (index: number) => void;
   disabled?: boolean;
 }) {
   const fields = useMemo(() => sortedFields(schema), [schema]);
@@ -105,6 +126,8 @@ export function QuotePreview({
   // shared props for the inline value cells
   const cellCtx = { activeFieldId, disabled, onActivateField, onConfirmField };
 
+  const passageProps = { activeFieldId, disabled, onActivatePassage, exceptions };
+
   return (
     <div className="quote-doc font-serif text-[15px] leading-relaxed text-gray-800">
       {/* Letterhead */}
@@ -117,16 +140,28 @@ export function QuotePreview({
         </p>
       </div>
 
-      <p className="mb-4">
+      <Passage
+        slug="intro"
+        label="Opening / overall terms"
+        text="We are pleased to submit our quotation as set out below. Unless noted against a line, all prices are quoted in the RFQ currency."
+        as="p"
+        className="mb-4"
+        {...passageProps}
+      >
         We are pleased to submit our quotation as set out below. Unless noted
         against a line, all prices are quoted in{' '}
         <span className="font-semibold">{rfqCurrency}</span>.
-      </p>
+      </Passage>
 
       {/* Line items — a real table, plain-text cells */}
-      <h3 className="font-sans font-semibold text-gray-900 mt-6 mb-2">
+      <SectionHeading
+        slug="pricing"
+        label="Pricing section"
+        text="1. Pricing"
+        {...passageProps}
+      >
         1. Pricing
-      </h3>
+      </SectionHeading>
       <div className="overflow-x-auto -mx-5 px-5">
         <table className="w-full border-collapse text-[14px]">
           <thead>
@@ -291,9 +326,9 @@ export function QuotePreview({
         if (commFields.length === 0) return null;
         return (
           <>
-            <h3 className="font-sans font-semibold text-gray-900 mt-8 mb-2">
+            <SectionHeading slug="commercial" label="Commercial terms" text="2. Commercial terms" {...passageProps}>
               2. Commercial terms
-            </h3>
+            </SectionHeading>
             <ul className="space-y-1.5 list-disc pl-5">
               {commFields.map((f) => (
                 <li key={f.id}>
@@ -322,9 +357,9 @@ export function QuotePreview({
         if (qFields.length === 0) return null;
         return (
           <>
-            <h3 className="font-sans font-semibold text-gray-900 mt-8 mb-2">
+            <SectionHeading slug="quality" label="Quality and capability" text="3. Quality & capability" {...passageProps}>
               3. Quality &amp; capability
-            </h3>
+            </SectionHeading>
             <dl className="space-y-3">
               {qFields.map((f) => (
                 <div key={f.id}>
@@ -352,12 +387,84 @@ export function QuotePreview({
         );
       })()}
 
-      {/* Notes */}
-      <h3 className="font-sans font-semibold text-gray-900 mt-8 mb-2">
-        4. Notes to the buyer
-      </h3>
+      {/* The buyer's terms — read-only, each clause clickable to react to */}
+      {(rfqTerms.length > 0 || rfqHeader) && (
+        <>
+          <SectionHeading
+            slug="terms"
+            label="The buyer's terms & conditions"
+            text="4. The buyer's terms"
+            {...passageProps}
+          >
+            4. The buyer&rsquo;s terms
+          </SectionHeading>
+          <p className="text-[13px] text-gray-500 mb-2 font-sans">
+            From the RFQ. Click a clause to accept it as-is by saying so, or to
+            raise a condition — I&rsquo;ll change a field if it maps to one, or
+            note it for the buyer.
+          </p>
+          <ul className="space-y-1.5 list-disc pl-5">
+            {rfqHeader?.expectedDelivery && (
+              <TermClause
+                slug="term-delivery"
+                text={`Expected delivery: ${rfqHeader.expectedDelivery}`}
+                {...passageProps}
+              />
+            )}
+            {rfqHeader?.validity && (
+              <TermClause
+                slug="term-validity"
+                text={`Quote validity: ${rfqHeader.validity}`}
+                {...passageProps}
+              />
+            )}
+            {rfqTerms.map((t, i) => (
+              <TermClause key={i} slug={`term-${i}`} text={t} {...passageProps} />
+            ))}
+          </ul>
+        </>
+      )}
+
+      {/* Exceptions the supplier has raised */}
+      {exceptions.length > 0 && (
+        <div className="mt-8 rounded-lg border border-amber-300 bg-amber-50 p-3">
+          <p className="font-sans font-semibold text-amber-900 text-sm mb-2">
+            Conditions & exceptions the buyer will see ({exceptions.length})
+          </p>
+          <ul className="space-y-2">
+            {exceptions.map((e, i) => (
+              <li key={i} className="text-[14px] flex items-start gap-2">
+                <span className="flex-1">
+                  <span className="font-medium">{e.re.replace(/[.:\s]+$/, '')} — </span>
+                  {e.comment}
+                </span>
+                {!disabled && (
+                  <button
+                    onClick={() => onRemoveException(i)}
+                    className="text-amber-600 hover:text-amber-900 text-sm shrink-0"
+                    aria-label="Remove"
+                    title="Remove this exception"
+                  >
+                    ×
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Free-form notes */}
+      <SectionHeading
+        slug="notes"
+        label="Notes to the buyer"
+        text="5. Notes to the buyer"
+        {...passageProps}
+      >
+        5. Notes to the buyer
+      </SectionHeading>
       <p className="text-[13px] text-gray-500 mb-1 font-sans">
-        Caveats, exceptions, anything that doesn&rsquo;t belong in a line above.
+        Anything else that doesn&rsquo;t belong in a line or a condition above.
       </p>
       <textarea
         className="w-full border border-gray-200 rounded p-2 text-[14px] font-serif"
@@ -368,6 +475,81 @@ export function QuotePreview({
         onChange={(e) => onChange({ ...value, notes: e.target.value })}
       />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Clickable document passages (headings, intro, T&C clauses)
+// ---------------------------------------------------------------------------
+
+type PassageCtx = {
+  activeFieldId?: string | null;
+  disabled?: boolean;
+  onActivatePassage: (p: PassageRef) => void;
+  exceptions: QuoteException[];
+};
+
+function Passage({
+  slug,
+  label,
+  text,
+  as = 'span',
+  className = '',
+  children,
+  activeFieldId,
+  disabled,
+  onActivatePassage,
+  exceptions,
+}: PassageCtx & {
+  slug: string;
+  label: string;
+  text: string;
+  as?: 'span' | 'p' | 'li';
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const id = passageId(slug);
+  const active = activeFieldId === id;
+  const raised = exceptions.filter((e) => e.re.toLowerCase().includes(label.toLowerCase().split(' ')[0]));
+  const Tag = as;
+  return (
+    <Tag
+      data-field={id}
+      onClick={() => !disabled && onActivatePassage({ id, label, text })}
+      className={`${className} ${disabled ? '' : 'cursor-pointer hover:bg-blue-50/60 rounded'} ${
+        active ? 'ring-2 ring-blue-300 rounded' : ''
+      }`}
+      title={disabled ? undefined : 'Click to comment on this to the assistant'}
+    >
+      {children}
+      {raised.length > 0 && (
+        <span className="ml-1 align-middle text-amber-600 text-[11px] font-sans">
+          ⚠ {raised.length}
+        </span>
+      )}
+    </Tag>
+  );
+}
+
+function SectionHeading(
+  p: PassageCtx & { slug: string; label: string; text: string; children: React.ReactNode }
+) {
+  return (
+    <Passage
+      {...p}
+      as="span"
+      className="font-sans font-semibold text-gray-900 mt-8 mb-2 block"
+    >
+      {p.children}
+    </Passage>
+  );
+}
+
+function TermClause(p: PassageCtx & { slug: string; text: string }) {
+  return (
+    <Passage {...p} label={p.text} as="li" className="marker:text-gray-400">
+      {p.text}
+    </Passage>
   );
 }
 

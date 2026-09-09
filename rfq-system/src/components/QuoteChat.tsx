@@ -13,6 +13,16 @@ interface Msg {
 import type { LineItemResponse } from '@/lib/line-response';
 import type { FieldProvenance } from '@/lib/line-response-status';
 
+import type { QuoteException } from '@/lib/line-response-status';
+
+export interface ChatScope {
+  /** a `line:<id>:<field>` id, a form field id, or `passage:<slug>` */
+  id: string;
+  label: string;
+  /** when set, this is a document passage (heading / T&C / intro), not a field */
+  text?: string;
+}
+
 export interface ChatApplyPayload {
   /** buyer-defined quote-level / questionnaire field id -> value */
   formPatches: Record<string, string | number>;
@@ -20,6 +30,8 @@ export interface ChatApplyPayload {
   linePatches: Record<string, Partial<LineItemResponse>>;
   /** target id -> provenance (confidence + rationale) for each written value */
   provenance: Record<string, FieldProvenance>;
+  /** caveats the supplier raised against a passage — recorded for the buyer */
+  exceptions: QuoteException[];
 }
 
 interface Attachment {
@@ -44,8 +56,8 @@ export function QuoteChat({
   disabled,
 }: {
   token: string;
-  /** a `line:<id>:<field>` id or a form field id the supplier is clarifying */
-  activeField?: { id: string; label: string } | null;
+  /** the field or passage the supplier is discussing */
+  activeField?: ChatScope | null;
   onClearActiveField?: () => void;
   onApply: (payload: ChatApplyPayload) => void;
   disabled?: boolean;
@@ -54,7 +66,7 @@ export function QuoteChat({
     {
       role: 'assistant',
       content:
-        'Attach your quotation, price list, rate card or certificates (PDF, Word, CSV) or paste the details here. I\'ll read them into your quote and tell you what still needs your input. Click any highlighted field to give me more on it.',
+        'Attach your quotation, price list, rate card or certificates (PDF, Word, CSV) or paste the details here. I\'ll read them into your quote and tell you what still needs your input. Click any value to correct it, or click a heading / terms clause to raise a caveat — I\'ll change what I can and note the rest for the buyer.',
     },
   ]);
   const [input, setInput] = useState('');
@@ -104,23 +116,30 @@ export function QuoteChat({
         formPatches: Record<string, string | number>;
         linePatches: Record<string, Partial<LineItemResponse>>;
         provenance: Record<string, FieldProvenance>;
+        exceptions: QuoteException[];
       }>(`/api/quote/${token}/chat`, {
         method: 'POST',
         body: JSON.stringify({
           message: messageToSend || undefined,
           documentTexts: docsToSend.length ? docsToSend : undefined,
-          activeField: activeField?.id,
+          // a passage carries `text`; a field is scoped by id only
+          activeField: activeField && !activeField.text ? activeField.id : undefined,
+          activePassage: activeField?.text
+            ? { label: activeField.label, text: activeField.text }
+            : undefined,
         }),
       });
       setMessages((m) => [...m, { role: 'assistant', content: res.message }]);
       const hasUpdates =
         Object.keys(res.formPatches ?? {}).length > 0 ||
-        Object.keys(res.linePatches ?? {}).length > 0;
+        Object.keys(res.linePatches ?? {}).length > 0 ||
+        (res.exceptions ?? []).length > 0;
       if (hasUpdates) {
         onApply({
           formPatches: res.formPatches ?? {},
           linePatches: res.linePatches ?? {},
           provenance: res.provenance ?? {},
+          exceptions: res.exceptions ?? [],
         });
       }
       onClearActiveField?.();
@@ -155,18 +174,23 @@ export function QuoteChat({
         <div className="border-t border-gray-200 p-3 space-y-2">
           {activeField && (
             <div className="flex items-center gap-1.5 text-xs">
-              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 pl-2 pr-1 py-0.5">
-                ↳ {activeField.label}
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 pl-2 pr-1 py-0.5 max-w-[240px]">
+                <span className="truncate">
+                  {activeField.text ? 're: ' : '↳ '}
+                  {activeField.label}
+                </span>
                 <button
                   onClick={onClearActiveField}
-                  className="text-blue-500 hover:text-blue-800 leading-none px-0.5"
-                  aria-label="Clear field focus"
+                  className="text-blue-500 hover:text-blue-800 leading-none px-0.5 shrink-0"
+                  aria-label="Clear focus"
                 >
                   ×
                 </button>
               </span>
               <span className="text-gray-400">
-                your next message fills this field
+                {activeField.text
+                  ? 'your comment is about this passage'
+                  : 'your next message fills this field'}
               </span>
             </div>
           )}

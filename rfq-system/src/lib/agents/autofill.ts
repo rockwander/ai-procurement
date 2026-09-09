@@ -26,12 +26,24 @@ export interface AutofillPatch {
   rationale: string;
 }
 
+export interface AutofillExceptionOut {
+  /** short label for the passage the comment is about */
+  re: string;
+  /** the supplier's comment, tidied */
+  comment: string;
+}
+
 export interface AutofillOutput {
   patches: Record<string, AutofillPatch>;
   /** labels of mandatory-ish targets the documents said nothing about */
   missingFields: string[];
   /** short free-form notes for the supplier (caveats, things to double-check) */
   suggestions: string[];
+  /**
+   * Caveats the supplier raised against a passage that ISN'T a field value
+   * (a heading, a T&C clause, the intro) — recorded for the buyer, not applied.
+   */
+  exceptions: AutofillExceptionOut[];
 }
 
 export interface AutofillInput {
@@ -47,6 +59,15 @@ export interface AutofillInput {
    * consequence), not rescan everything.
    */
   activeField?: string;
+  /**
+   * When set, the supplier clicked a passage of the document (a heading, a
+   * T&C clause, the intro line) and is commenting on it. `label` is a short
+   * name for it, `text` the passage itself. If the comment maps to a field,
+   * patch it; otherwise return it as an exception.
+   */
+  activePassage?: { label: string; text: string };
+  /** RFQ terms & conditions, so the agent can react to a T&C the supplier quotes */
+  rfqTerms?: string[];
 }
 
 const DOC_CHAR_CAP = 20_000;
@@ -118,7 +139,13 @@ export class AutofillAgent extends BaseAgent {
   async chatResponse(
     userMessage: string,
     input: AutofillInput
-  ): Promise<AgentResponse<{ message: string; patches: Record<string, AutofillPatch> }>> {
+  ): Promise<
+    AgentResponse<{
+      message: string;
+      patches: Record<string, AutofillPatch>;
+      exceptions: AutofillExceptionOut[];
+    }>
+  > {
     const startTime = Date.now();
 
     try {
@@ -134,6 +161,14 @@ export class AutofillAgent extends BaseAgent {
         prompt += '\n';
       }
       prompt += this.buildTargetsBlock(input);
+      if (input.rfqTerms && input.rfqTerms.length) {
+        prompt += `\n## RFQ terms & conditions (the buyer's; the supplier may comment on these)\n`;
+        input.rfqTerms.forEach((t) => (prompt += `- ${t}\n`));
+      }
+      if (input.activePassage) {
+        prompt += `\n## The supplier clicked this passage and is commenting on it\n`;
+        prompt += `Label: ${input.activePassage.label}\nText: "${input.activePassage.text}"\n`;
+      }
       if (input.documentTexts.length) {
         prompt += `\n## Documents the supplier just provided\n\n`;
         input.documentTexts.forEach((t, i) => {
@@ -153,7 +188,7 @@ export class AutofillAgent extends BaseAgent {
 
       return {
         success: true,
-        data: { message, patches: parsed.patches },
+        data: { message, patches: parsed.patches, exceptions: parsed.exceptions },
         tokensUsed,
         costUsd,
         durationMs: Date.now() - startTime,
@@ -172,7 +207,12 @@ export class AutofillAgent extends BaseAgent {
 
   private parseAutofillResponse(text: string): AutofillOutput {
     const raw = this.parseJsonResponse<any>(text);
-    const out: AutofillOutput = { patches: {}, missingFields: [], suggestions: [] };
+    const out: AutofillOutput = {
+      patches: {},
+      missingFields: [],
+      suggestions: [],
+      exceptions: [],
+    };
     const src = raw?.patches ?? raw?.extractedData ?? {};
     for (const [id, v] of Object.entries(src as Record<string, any>)) {
       if (v == null) continue;
@@ -192,6 +232,14 @@ export class AutofillAgent extends BaseAgent {
     }
     out.missingFields = Array.isArray(raw?.missingFields) ? raw.missingFields.map(String) : [];
     out.suggestions = Array.isArray(raw?.suggestions) ? raw.suggestions.map(String) : [];
+    out.exceptions = Array.isArray(raw?.exceptions)
+      ? raw.exceptions
+          .map((e: any) => ({
+            re: String(e?.re ?? '').trim(),
+            comment: String(e?.comment ?? '').trim(),
+          }))
+          .filter((e: AutofillExceptionOut) => e.comment.length > 0)
+      : [];
     return out;
   }
 
@@ -209,6 +257,20 @@ target and anything you can now resolve as a direct consequence. Do not rescan
 unrelated fields.\n`
       : '';
 
+    const passage = input.activePassage
+      ? `\nThe supplier clicked a passage of the document ("${input.activePassage.label}")
+and is commenting on it. Decide:
+- If the comment changes a quote value (a price, a lead time, a can-supply, a
+  questionnaire answer, a quote-level commercial field) → emit a patch.
+- If it is a caveat / condition / disagreement that is NOT a field (e.g. "we
+  can't do Net 45, we need Net 30" against a payment T&C; "prices firm only on
+  a 12-month commitment" against a heading) → emit it as an "exceptions" entry
+  with a short "re" (the passage) and a tidied "comment". Do NOT force it into a
+  field.
+- It can be both (patch + exception) if the comment implies a value change AND a
+  caveat.\n`
+      : '';
+
     const role = opts.conversational
       ? `You help a supplier put together their quotation for an RFQ. Answer their
 question in 1-3 short sentences, then output the JSON patch block.`
@@ -217,14 +279,15 @@ emails, rate cards - any layout) and map what they say onto a FIXED quote
 structure. You cannot change the structure.`;
 
     return `${role}
-${scope}
+${scope}${passage}
 Return the data as a JSON object (in a \`\`\`json code block if you also wrote prose):
 {
   "patches": {
     "<targetId>": { "value": <value>, "confidence": "high"|"medium"|"low", "rationale": "<one short sentence>" }
   },
   "missingFields": [ "<label of a mandatory target the documents/chat did not answer>" ],
-  "suggestions":   [ "<short caveat worth showing the supplier>" ]
+  "suggestions":   [ "<short caveat worth showing the supplier>" ],
+  "exceptions":    [ { "re": "<the passage/topic>", "comment": "<the supplier's caveat, tidied>" } ]
 }
 
 Target ids:

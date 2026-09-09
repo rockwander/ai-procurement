@@ -53,6 +53,8 @@ export async function GET(
       totalAmount: r.submission?.totalAmount ?? null,
       currency: r.submission?.currency ?? 'USD',
       notes: r.submission?.notes ?? null,
+      exceptions:
+        (r.submission?.exceptions as Array<{ re: string; comment: string }>) ?? [],
       formData: (r.submission?.formData as Record<string, unknown>) ?? {},
       lineItems: (r.submission?.lineItems as Array<Record<string, unknown>>) ?? [],
     }));

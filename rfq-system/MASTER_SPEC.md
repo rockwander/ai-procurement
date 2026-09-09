@@ -231,6 +231,24 @@ recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
 
+### 2026-09-10 — Comment on any passage; caveats become structured exceptions
+
+**Refinement:** In the supplier document preview, any text is clickable — a
+heading, the opening line, and each of the buyer's T&C clauses (now shown
+read-only in the quotation). Clicking a passage scopes the chat to it. The
+agent then either **applies a field change** (if the comment maps to one) or
+records a **structured exception** `{ re, comment }` (if it's a caveat that
+isn't a field — e.g. "we need Net 30, not Net 45"); it can do both. Exceptions
+show inline (⚠) and in a "Conditions & exceptions" panel, are removable before
+submit, are stored on `quote_submissions.exceptions`, and surface to the buyer
+in the comparison as a "Conditions raised" column.
+
+**Affects:** §3 Supplier Flow; Autofill Agent (`activePassage` in, `exceptions`
+out); `/quote/[token]` GET (returns RFQ terms) + POST (`exceptions`);
+`quote_submissions` schema; comparison columns.
+
+**Status:** implemented (browser-verified).
+
 ### 2026-09-09 — Supplier responds via a document preview, not a form
 
 **Refinement:** The supplier side of an RFQ becomes a **chat + live document

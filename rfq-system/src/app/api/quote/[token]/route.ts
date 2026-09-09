@@ -42,6 +42,12 @@ export async function GET(
         summary,
         deadline: ctx.rfq.deadline,
         currency: rfqDoc.header.currency || 'INR',
+        terms: rfqDoc.termsAndConditions ?? [],
+        header: {
+          buyer: rfqDoc.header.buyer,
+          expectedDelivery: rfqDoc.header.expectedDelivery,
+          validity: rfqDoc.header.validity,
+        },
       },
       supplier: { companyName: ctx.supplier.companyName },
       formSchema: ctx.rfq.formSchema,
@@ -53,7 +59,12 @@ export async function GET(
       })),
       submitted: ctx.invitation.status === 'submitted',
       submission: ctx.submission
-        ? { formData: ctx.submission.formData, lineItems: ctx.submission.lineItems, submittedAt: ctx.submission.submittedAt }
+        ? {
+            formData: ctx.submission.formData,
+            lineItems: ctx.submission.lineItems,
+            exceptions: ctx.submission.exceptions ?? [],
+            submittedAt: ctx.submission.submittedAt,
+          }
         : null,
     });
   } catch (error) {
@@ -76,7 +87,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { formData, lineItems, notes } = body as {
+    const { formData, lineItems, notes, exceptions } = body as {
       formData?: Record<string, unknown>;
       lineItems?: Array<{
         itemId: string;
@@ -93,6 +104,7 @@ export async function POST(
         totalPrice: number | null;
       }>;
       notes?: string;
+      exceptions?: Array<{ re: string; comment: string }>;
     };
 
     if (!formData) return badRequest('formData is required');
@@ -129,6 +141,12 @@ export async function POST(
       0
     );
 
+    const cleanExceptions = Array.isArray(exceptions)
+      ? exceptions
+          .map((e) => ({ re: String(e?.re ?? '').trim(), comment: String(e?.comment ?? '').trim() }))
+          .filter((e) => e.comment.length > 0)
+      : [];
+
     const [submission] = await db
       .insert(quoteSubmissions)
       .values({
@@ -138,6 +156,7 @@ export async function POST(
         totalAmount,
         currency: rfqCurrency,
         notes: notes ?? null,
+        exceptions: cleanExceptions,
       })
       .returning();
 

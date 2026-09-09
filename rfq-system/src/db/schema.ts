@@ -149,6 +149,11 @@ export const quoteSubmissions = pgTable('quote_submissions', {
   currency: text('currency').notNull().default('USD'),
   attachments: jsonb('attachments'),  // array of file URLs
   notes: text('notes'),
+  // Structured caveats the supplier raised against a specific passage of the
+  // RFQ / their quote (a heading, a T&C clause, a line) that isn't a field
+  // value. Shape: { re: string, comment: string }[]. See the supplier
+  // document-preview flow.
+  exceptions: jsonb('exceptions'),
   aiExtractedData: jsonb('ai_extracted_data'),  // data extracted from supplier docs
   submittedAt: timestamp('submitted_at').notNull().defaultNow(),
 });

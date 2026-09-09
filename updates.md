@@ -21,6 +21,32 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-10 — Supplier can comment on any passage; caveats become structured exceptions
+**Refinement:** In the supplier document preview, **any text is clickable**, not
+just fields — a section heading, the opening line, and each of the buyer's
+**terms & conditions** clauses (now shown read-only in the quotation). Clicking a
+passage rings it and scopes the chat to it ("re: …"). When the supplier then
+comments:
+- if it maps to a **field** (a price, lead time, a questionnaire answer, a
+  quote-level commercial field), the agent **applies it**;
+- if it's a **caveat / condition / disagreement** that isn't a field
+  (e.g. "we can't do Net 45, our standard is Net 30" against a payment T&C), the
+  agent records it as a **structured exception** `{ re, comment }` — shown
+  inline under the passage (a ⚠ marker) and in a "Conditions & exceptions the
+  buyer will see" panel, removable before submit.
+- it can be **both** (a value change *and* a caveat).
+
+Exceptions are stored on the submission (`quote_submissions.exceptions` jsonb)
+and surface to the buyer in the quote comparison as a **"Conditions raised"**
+column. The free-text notes area stays for anything not tied to a passage.
+
+**Affects:** MASTER_SPEC §3 (Supplier Flow); Autofill Agent (adds
+`activePassage` input + `exceptions` output); `/quote/[token]` GET (returns the
+RFQ terms) + POST (accepts `exceptions`); `quote_submissions` schema; quote
+comparison columns.
+**Status:** implemented (verified in browser: clicking a T&C clause → chat
+scoped → agent recorded the Net 30 exception → shown inline + in the panel).
+
 ## 2026-09-09 — Supplier responds via a document preview, not a form
 **Refinement:** The supplier side of an RFQ is a **chat + live document
 preview**, not a form to fill. The supplier talks to the Autofill Agent and/or

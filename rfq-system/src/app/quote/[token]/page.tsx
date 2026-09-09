@@ -9,7 +9,7 @@ import {
   ActiveField,
 } from '@/components/QuotePreview';
 import { NeedsAttentionPanel } from '@/components/NeedsAttentionPanel';
-import { QuoteChat, ChatApplyPayload } from '@/components/QuoteChat';
+import { QuoteChat, ChatApplyPayload, ChatScope } from '@/components/QuoteChat';
 import { Button, ErrorText } from '@/components/ui';
 import { api } from '@/lib/fetcher';
 import { FormSchema, emptySchema } from '@/lib/form-schema';
@@ -24,15 +24,23 @@ import {
   missingMandatory,
   type ProvenanceMap,
   type AttentionItem,
+  type QuoteException,
 } from '@/lib/line-response-status';
 
 interface QuoteData {
-  rfq: { title: string; summary: string; deadline: string | null; currency: string };
+  rfq: {
+    title: string;
+    summary: string;
+    deadline: string | null;
+    currency: string;
+    terms: string[];
+    header: { buyer: string; expectedDelivery: string; validity: string };
+  };
   supplier: { companyName: string };
   formSchema: FormSchema;
   lineItems: LineItemInput[];
   submitted: boolean;
-  submission: { formData: any; lineItems: any[] } | null;
+  submission: { formData: any; lineItems: any[]; exceptions?: QuoteException[] } | null;
 }
 
 export default function SupplierQuotePage() {
@@ -50,7 +58,9 @@ export default function SupplierQuotePage() {
   });
   // target id -> confidence + rationale for values the AI wrote / defaulted.
   const [provenance, setProvenance] = useState<ProvenanceMap>({});
-  const [activeField, setActiveField] = useState<ActiveField | null>(null);
+  const [activeField, setActiveField] = useState<ChatScope | null>(null);
+  // caveats the supplier raised against a passage (heading / T&C / intro)
+  const [exceptions, setExceptions] = useState<QuoteException[]>([]);
 
   useEffect(() => {
     api<QuoteData>(`/api/quote/${token}`)
@@ -70,6 +80,7 @@ export default function SupplierQuotePage() {
           lineResponses,
           notes: '',
         });
+        if (d.submission?.exceptions?.length) setExceptions(d.submission.exceptions);
         // Seed provenance: system-inferred defaults start as "assumed" (amber)
         // so the supplier is nudged to confirm currency / UoM etc.
         if (!d.submission) {
@@ -107,10 +118,19 @@ export default function SupplierQuotePage() {
 
   const jumpToField = useCallback((item: AttentionItem | ActiveField) => {
     setActiveField({ id: item.id, label: item.label });
-    // scroll the preview to the anchor (after the active ring re-renders)
     requestAnimationFrame(() => {
       const el = document.querySelector(`[data-field="${CSS.escape(item.id)}"]`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, []);
+
+  // The supplier clicked a document passage (heading / T&C / intro) to comment.
+  const activatePassage = useCallback((p: { id: string; label: string; text: string }) => {
+    setActiveField({ id: p.id, label: p.label, text: p.text });
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-field="${CSS.escape(p.id)}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }, []);
 
@@ -146,6 +166,7 @@ export default function SupplierQuotePage() {
           formData: value.formData,
           lineItems,
           notes: value.notes || undefined,
+          exceptions,
         }),
       });
       setJustSubmitted(true);
@@ -217,6 +238,9 @@ export default function SupplierQuotePage() {
                   }
                   return next;
                 });
+                if (payload.exceptions.length) {
+                  setExceptions((prev) => [...prev, ...payload.exceptions]);
+                }
               }}
             />
           </div>
@@ -250,12 +274,19 @@ export default function SupplierQuotePage() {
               schema={schema}
               lineItems={data.lineItems}
               rfqCurrency={data.rfq.currency}
+              rfqTerms={data.rfq.terms}
+              rfqHeader={data.rfq.header}
               value={value}
               provenance={provenance}
+              exceptions={exceptions}
               activeFieldId={activeField?.id}
               onChange={setValue}
               onConfirmField={confirmField}
               onActivateField={(f) => (f ? jumpToField(f) : setActiveField(null))}
+              onActivatePassage={activatePassage}
+              onRemoveException={(i) =>
+                setExceptions((prev) => prev.filter((_, j) => j !== i))
+              }
               disabled={!!locked}
             />
 

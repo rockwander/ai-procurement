@@ -347,3 +347,27 @@ export function coverageForLine(
   const committed = committedQty(resp, asked);
   return { committed, asked, partial: committed < asked, noBid: false };
 }
+
+// ---------------------------------------------------------------------------
+// Exceptions — a supplier's comment against a specific passage of the document
+// that isn't a field value (a heading, a T&C clause, the intro line, a line
+// item). Stored on the submission as { re, comment }[] and surfaced to the
+// buyer in the comparison.
+// ---------------------------------------------------------------------------
+
+export interface QuoteException {
+  /** short label for the passage the comment is about, e.g. "Payment terms — Net 45" */
+  re: string;
+  /** the supplier's comment */
+  comment: string;
+}
+
+export function normaliseExceptions(raw: unknown): QuoteException[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((e) => ({
+      re: String((e as any)?.re ?? '').trim(),
+      comment: String((e as any)?.comment ?? '').trim(),
+    }))
+    .filter((e) => e.comment.length > 0);
+}

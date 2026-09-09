@@ -48,10 +48,11 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { message, documentTexts, activeField } = body as {
+    const { message, documentTexts, activeField, activePassage } = body as {
       message?: string;
       documentTexts?: string[];
       activeField?: string;
+      activePassage?: { label: string; text: string };
     };
 
     if (!message && (!documentTexts || documentTexts.length === 0)) {
@@ -94,6 +95,8 @@ export async function POST(
       rfqCurrency,
       conversationHistory,
       activeField: activeField || undefined,
+      activePassage: activePassage || undefined,
+      rfqTerms: rfqDoc?.termsAndConditions ?? [],
     };
 
     const hasDocs = !!(documentTexts && documentTexts.length > 0);
@@ -106,6 +109,7 @@ export async function POST(
     > = {};
     const missingFields: string[] = [];
     const suggestions: string[] = [];
+    const exceptions: Array<{ re: string; comment: string }> = [];
 
     // A message that's just a cover note ("here's our quote") doesn't need a
     // conversational turn — extraction handles it.
@@ -121,6 +125,7 @@ export async function POST(
       if (chat.success && chat.data) {
         assistantMessage = chat.data.message;
         Object.assign(patches, chat.data.patches);
+        exceptions.push(...chat.data.exceptions);
       } else {
         assistantMessage = `Sorry, I hit an error: ${chat.error}`;
       }
@@ -130,6 +135,7 @@ export async function POST(
         Object.assign(patches, extract.data.patches);
         missingFields.push(...extract.data.missingFields);
         suggestions.push(...extract.data.suggestions);
+        exceptions.push(...extract.data.exceptions);
       } else {
         assistantMessage = `I couldn't read those documents: ${extract.error}`;
       }
@@ -151,6 +157,15 @@ export async function POST(
       if (suggestions.length) parts.push(suggestions.join(' '));
       assistantMessage = parts.join(' ');
     }
+    if (exceptions.length && assistantMessage) {
+      assistantMessage +=
+        ` Noted for the buyer: ` +
+        exceptions.map((e) => `“${e.comment}” (re: ${e.re})`).join('; ') + '.';
+    } else if (exceptions.length) {
+      assistantMessage =
+        `Noted for the buyer: ` +
+        exceptions.map((e) => `“${e.comment}” (re: ${e.re})`).join('; ') + '.';
+    }
 
     await db.insert(chatMessages).values([
       {
@@ -170,6 +185,7 @@ export async function POST(
           linePatches: applied.linePatches,
           formPatches: applied.formPatches,
           provenance: applied.provenance,
+          exceptions,
         },
       },
     ]);
@@ -182,6 +198,7 @@ export async function POST(
       rejected: applied.rejected,
       missingFields,
       suggestions,
+      exceptions,
     });
   } catch (error) {
     return serverError(error);

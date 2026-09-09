@@ -14,6 +14,7 @@ export interface QuoteRow {
   totalAmount: number | null;
   currency: string;
   notes: string | null;
+  exceptions?: Array<{ re: string; comment: string }>;
   submittedAt: string | null;
   formData: Record<string, unknown>;
   lineItems: Array<Record<string, unknown>>;
@@ -147,6 +148,19 @@ export function buildColumns(
       group: 'parent',
       accessor: (r) => r.notes,
       numeric: false,
+    },
+    {
+      key: 'exceptions',
+      label: 'Conditions raised',
+      group: 'parent',
+      numeric: false,
+      accessor: (r) => {
+        const ex = r.exceptions ?? [];
+        if (ex.length === 0) return '—';
+        return ex
+          .map((e) => `${e.re.replace(/[.:\s]+$/, '')} — ${e.comment}`)
+          .join('  •  ');
+      },
     },
   ];
 
