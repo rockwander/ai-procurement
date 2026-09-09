@@ -175,9 +175,9 @@ export default function SupplierQuotePage() {
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-6xl mx-auto px-4 py-4">
-          <h1 className="text-xl font-bold text-gray-900">Request for Quotation</h1>
+          <h1 className="text-xl font-bold text-gray-900">Your quotation</h1>
           <p className="text-sm text-gray-500">
-            {data.supplier.companyName}
+            {data.supplier.companyName} · responding to {data.rfq.title}
             {data.rfq.deadline &&
               ` · due ${new Date(data.rfq.deadline).toLocaleDateString()}`}
           </p>
@@ -224,12 +224,14 @@ export default function SupplierQuotePage() {
 
         {/* Right — preview */}
         <div className="lg:col-span-3 order-1 lg:order-2 space-y-4">
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <h2 className="font-semibold text-gray-900 mb-1">{data.rfq.title}</h2>
-            <p className="text-sm text-gray-600 whitespace-pre-wrap line-clamp-4">
+          <details className="bg-white rounded-lg border border-gray-200 p-4 text-sm">
+            <summary className="font-semibold text-gray-900 cursor-pointer">
+              What the buyer is asking for
+            </summary>
+            <p className="text-gray-600 whitespace-pre-wrap mt-2">
               {data.rfq.summary}
             </p>
-          </div>
+          </details>
 
           {locked ? (
             <div className="bg-green-50 border border-green-200 rounded-lg p-5">
