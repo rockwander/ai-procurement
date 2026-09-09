@@ -12,6 +12,7 @@
 import type { LineItemResponse, RFQLineForResponse } from '@/lib/line-response';
 import { committedQty, QUOTE_UOM_OPTIONS } from '@/lib/line-response';
 import type { FormSchema, FormField } from '@/lib/form-schema';
+import { QUESTIONNAIRE_SECTION } from '@/lib/form-schema';
 
 // ---------------------------------------------------------------------------
 // Per-line field metadata
@@ -175,7 +176,7 @@ export function missingMandatory(
     if (!f.required) continue;
     if (hasValue(formData[f.id])) continue;
     const group: AttentionItem['group'] =
-      f.section === 'questionnaire' ? 'questionnaire' : 'commercial';
+      f.section === QUESTIONNAIRE_SECTION ? 'questionnaire' : 'commercial';
     items.push({ id: f.id, group, label: f.label });
   }
 
