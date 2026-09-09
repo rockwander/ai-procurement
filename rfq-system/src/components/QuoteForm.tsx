@@ -93,19 +93,22 @@ export function QuoteForm({
           For every line, say whether you can supply it and at what price. Leave
           the price blank on lines you are not quoting.
         </p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border border-gray-200 rounded">
+        <p className="text-[11px] text-gray-400 mb-1 lg:hidden">
+          Scroll sideways to see all columns →
+        </p>
+        <div className="overflow-x-auto -mx-5 px-5 pb-1">
+          <table className="w-max min-w-full text-sm border border-gray-200 rounded">
             <thead className="bg-gray-50">
-              <tr className="text-left text-gray-500">
-                <th className="px-2 py-2 min-w-[180px]">Item</th>
-                <th className="px-2 py-2 w-24">Asked</th>
-                <th className="px-2 py-2 w-32">Can supply?</th>
-                <th className="px-2 py-2 w-24">Unit price</th>
-                <th className="px-2 py-2 w-24">Currency</th>
-                <th className="px-2 py-2 w-32">Priced per</th>
-                <th className="px-2 py-2 w-24">Qty you can supply</th>
-                <th className="px-2 py-2 w-24">Lead days</th>
-                <th className="px-2 py-2 w-24">MOQ</th>
+              <tr className="text-left text-gray-500 whitespace-nowrap">
+                <th className="px-3 py-2 w-64">Item</th>
+                <th className="px-3 py-2 w-28">Asked</th>
+                <th className="px-3 py-2 w-40">Can supply?</th>
+                <th className="px-3 py-2 w-36">Unit price</th>
+                <th className="px-3 py-2 w-28">Currency</th>
+                <th className="px-3 py-2 w-40">Priced per</th>
+                <th className="px-3 py-2 w-40">Qty you can supply</th>
+                <th className="px-3 py-2 w-28">Lead days</th>
+                <th className="px-3 py-2 w-28">MOQ</th>
               </tr>
             </thead>
             <tbody>
@@ -114,13 +117,13 @@ export function QuoteForm({
                 const norm = normaliseLinePrice(r, rfqCurrency);
                 return (
                   <tr key={li.id} className="border-t border-gray-100 align-top">
-                    <td className="px-2 py-2 text-gray-800">
+                    <td className="px-3 py-2 text-gray-800">
                       {li.itemDescription}
                     </td>
-                    <td className="px-2 py-2 text-gray-600 whitespace-nowrap">
+                    <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
                       {li.quantity.toLocaleString()} {li.unit}
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-3 py-2 align-top">
                       <Select
                         value={r.canSupply}
                         disabled={disabled}
@@ -135,7 +138,7 @@ export function QuoteForm({
                         <option value="no">No</option>
                       </Select>
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-3 py-2 align-top">
                       <Input
                         type="number"
                         min="0"
@@ -160,7 +163,7 @@ export function QuoteForm({
                         </p>
                       )}
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-3 py-2 align-top">
                       <Input
                         value={r.currency}
                         disabled={disabled || r.canSupply === 'no'}
@@ -169,7 +172,7 @@ export function QuoteForm({
                         }
                       />
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-3 py-2 align-top">
                       <Select
                         value={r.quotedUom}
                         disabled={disabled || r.canSupply === 'no'}
@@ -184,7 +187,7 @@ export function QuoteForm({
                         ))}
                       </Select>
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-3 py-2 align-top">
                       <Input
                         type="number"
                         min="0"
@@ -199,7 +202,7 @@ export function QuoteForm({
                         }
                       />
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-3 py-2 align-top">
                       <Input
                         type="number"
                         min="0"
@@ -213,7 +216,7 @@ export function QuoteForm({
                         }
                       />
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-3 py-2 align-top">
                       <Input
                         type="number"
                         min="0"
