@@ -206,7 +206,7 @@ Rules:
     }
     m += `\n`;
 
-    m += `## Currently visible rows:\n${input.rowsText}\n\n`;
+    m += `## Quotes in view (suppliers compared side by side):\n${input.rowsText}\n\n`;
 
     if (input.conversationHistory.length) {
       m += `## Conversation so far:\n`;

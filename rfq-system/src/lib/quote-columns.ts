@@ -220,16 +220,6 @@ export function columnTab(col: ColumnDef): ColumnTab {
   return col.group === 'questionnaire' ? 'questionnaire' : 'lineitems';
 }
 
-/** Columns to render for a given tab, in their natural order. */
-export function columnsForTab(columns: ColumnDef[], tab: ColumnTab): ColumnDef[] {
-  if (tab === 'questionnaire') {
-    // keep supplier as an anchor so rows are identifiable
-    const anchor = columns.filter((c) => c.key === 'supplierName');
-    return [...anchor, ...columns.filter((c) => c.group === 'questionnaire')];
-  }
-  return columns.filter((c) => c.group !== 'questionnaire' && c.key !== 'notes');
-}
-
 export type FilterOp = 'contains' | 'eq' | 'lt' | 'gt';
 
 export interface Filter {

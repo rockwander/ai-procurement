@@ -12,10 +12,12 @@ import {
   ColumnTab,
   Filter,
   buildColumns,
-  columnsForTab,
   applyFilters,
-  sortRows,
 } from '@/lib/quote-columns';
+import {
+  buildLineMatrix,
+  buildQuestionnaireMatrix,
+} from '@/lib/quote-matrix';
 
 const TABS: { key: ColumnTab; label: string }[] = [
   { key: 'lineitems', label: 'Line items' },
@@ -33,11 +35,12 @@ export default function QuoteComparisonPage() {
   const [error, setError] = useState('');
 
   const [tab, setTab] = useState<ColumnTab>('lineitems');
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  // suppliers (by invitationId) the buyer has manually hidden
+  const [hiddenSuppliers, setHiddenSuppliers] = useState<Set<string>>(new Set());
+  // line-item field groups the buyer has hidden
+  const [hiddenGroups, setHiddenGroups] = useState<Set<string>>(new Set());
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [filters, setFilters] = useState<Filter[]>([]);
-  const [sortKey, setSortKey] = useState<string | null>('totalAmount');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const [awarding, setAwarding] = useState(false);
   const [awardResults, setAwardResults] = useState<any[] | null>(null);
@@ -49,6 +52,7 @@ export default function QuoteComparisonPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
+  // Chat + filter-field vocabulary — the per-supplier column model.
   const columns: ColumnDef[] = useMemo(
     () =>
       data
@@ -57,52 +61,106 @@ export default function QuoteComparisonPage() {
     [data]
   );
 
-  const tabColumns = useMemo(
-    () => columnsForTab(columns, tab),
-    [columns, tab]
-  );
-  const visibleColumns = tabColumns.filter((c) => !hidden.has(c.key));
-
   const submittedRows = useMemo(
     () => (data?.quotes ?? []).filter((q) => q.status === 'submitted'),
     [data]
   );
 
-  const displayedRows = useMemo(() => {
-    let rows = applyFilters(submittedRows, columns, filters);
-    rows = sortRows(rows, columns, sortKey, sortDir);
-    return rows;
-  }, [submittedRows, columns, filters, sortKey, sortDir]);
+  // Filters + manual hide decide which suppliers appear as columns.
+  const visibleSuppliers = useMemo(() => {
+    const passFilter = applyFilters(submittedRows, columns, filters);
+    return passFilter.filter((r) => !hiddenSuppliers.has(r.invitationId));
+  }, [submittedRows, columns, filters, hiddenSuppliers]);
 
-  // Notes for the Questionnaire tab: rendered as flagged bullets, not a column.
+  const rfqCurrency = data?.rfq.currency ?? 'INR';
+
+  const lineMatrix = useMemo(
+    () =>
+      data
+        ? buildLineMatrix(data.lineItems, visibleSuppliers, rfqCurrency)
+        : null,
+    [data, visibleSuppliers, rfqCurrency]
+  );
+
+  const questionnaireMatrix = useMemo(
+    () =>
+      data
+        ? buildQuestionnaireMatrix(data.rfq.formSchema, visibleSuppliers)
+        : null,
+    [data, visibleSuppliers]
+  );
+
+  const visibleGroups = useMemo(
+    () => (lineMatrix?.groups ?? []).filter((g) => !hiddenGroups.has(g.key)),
+    [lineMatrix, hiddenGroups]
+  );
+
+  // Notes for the Questionnaire tab: rendered as flagged bullets.
   const notesByRow = useMemo(
     () =>
-      displayedRows
-        .map((r) => ({
-          supplier: r.supplierName,
-          bullets: splitNotes(r.notes),
-        }))
+      visibleSuppliers
+        .map((r) => ({ supplier: r.supplierName, bullets: splitNotes(r.notes) }))
         .filter((n) => n.bullets.length > 0),
-    [displayedRows]
+    [visibleSuppliers]
   );
 
   // Compact text of what's on screen, for the assistant to reason over.
   const visibleRowsText = useMemo(() => {
-    const cols = columnsForTab(columns, 'lineitems').filter((c) => !hidden.has(c.key));
-    const lines = displayedRows.map((row) => {
-      const cells = cols.map((c) => {
-        const v = c.accessor(row);
-        return `${c.label}=${v == null ? '—' : v}`;
-      });
-      const notes = splitNotes(row.notes);
-      if (notes.length) cells.push(`flagged: ${notes.join(' | ')}`);
-      return `- ${cells.join(', ')}`;
-    });
-    return lines.join('\n') || '(no rows visible)';
-  }, [displayedRows, columns, hidden]);
+    if (!lineMatrix || !questionnaireMatrix) return '(no quotes)';
+    const s = lineMatrix.suppliers;
+    if (s.length === 0) return '(no suppliers match the filters)';
 
-  function toggleColumn(key: string) {
-    setHidden((prev) => {
+    const out: string[] = [];
+    out.push(`Suppliers in view: ${s.map((x) => x.supplierName).join(', ')}`);
+
+    out.push('\nLine items (value per supplier, in the order above):');
+    for (const row of lineMatrix.rows) {
+      const parts = visibleGroups.map((g) => {
+        const vals = s
+          .map((sc) => {
+            const sup = visibleSuppliers.find(
+              (v) => v.invitationId === sc.invitationId
+            )!;
+            return g.format(g.value(row.lineId, sup));
+          })
+          .join(' / ');
+        return `${g.label}: ${vals}`;
+      });
+      out.push(`- ${row.itemDescription} (asked ${row.askedQuantity} ${row.unit}) — ${parts.join('; ')}`);
+    }
+
+    if (questionnaireMatrix.rows.length) {
+      out.push('\nQuestionnaire (answer per supplier, in the order above):');
+      for (const q of questionnaireMatrix.rows) {
+        const vals = s
+          .map((sc) => {
+            const sup = visibleSuppliers.find(
+              (v) => v.invitationId === sc.invitationId
+            )!;
+            const v = q.value(sup);
+            return v == null || v === '' ? '—' : String(v);
+          })
+          .join(' / ');
+        out.push(`- ${q.label}: ${vals}`);
+      }
+    }
+
+    for (const n of notesByRow) {
+      out.push(`\nFlagged by ${n.supplier}: ${n.bullets.join(' | ')}`);
+    }
+    return out.join('\n');
+  }, [lineMatrix, questionnaireMatrix, visibleGroups, visibleSuppliers, notesByRow]);
+
+  function toggleSupplier(invitationId: string) {
+    setHiddenSuppliers((prev) => {
+      const next = new Set(prev);
+      next.has(invitationId) ? next.delete(invitationId) : next.add(invitationId);
+      return next;
+    });
+  }
+
+  function toggleGroup(key: string) {
+    setHiddenGroups((prev) => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
@@ -120,7 +178,6 @@ export default function QuoteComparisonPage() {
 
   function applyChatFilters(next: Filter[]) {
     setFilters(next);
-    // jump to whichever tab the first filtered column lives on
     const first = next[0] && columns.find((c) => c.key === next[0].columnKey);
     if (first) setTab(first.group === 'questionnaire' ? 'questionnaire' : 'lineitems');
   }
@@ -161,6 +218,8 @@ export default function QuoteComparisonPage() {
     );
   }
 
+  const allSuppliers = submittedRows;
+
   return (
     <AppShell>
       <div className="flex items-center justify-between mb-1">
@@ -172,6 +231,9 @@ export default function QuoteComparisonPage() {
       <p className="text-sm text-gray-500 mb-6">
         {submittedRows.length} submitted ·{' '}
         {data.quotes.length - submittedRows.length} pending
+        {visibleSuppliers.length !== submittedRows.length && (
+          <> · {visibleSuppliers.length} shown</>
+        )}
       </p>
 
       {error && (
@@ -198,9 +260,8 @@ export default function QuoteComparisonPage() {
         </Card>
       ) : (
         <div className="grid lg:grid-cols-[minmax(0,1fr)_360px] gap-6 items-start">
-          {/* LEFT — tabbed table */}
+          {/* LEFT — transposed comparison grid */}
           <div className="min-w-0">
-            {/* tab bar */}
             <div className="flex items-center justify-between border-b border-gray-200 mb-4">
               <div className="flex gap-1">
                 {TABS.map((t) => (
@@ -223,28 +284,65 @@ export default function QuoteComparisonPage() {
                   size="sm"
                   onClick={() => setShowColumnMenu((v) => !v)}
                 >
-                  Columns ▾
+                  Show / hide ▾
                 </Button>
                 {showColumnMenu && (
-                  <div className="absolute right-0 z-10 mt-1 w-56 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+                  <div className="absolute right-0 z-10 mt-1 w-60 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
                     <p className="text-[11px] font-medium text-gray-400 uppercase px-1 pb-1">
-                      {tab === 'questionnaire' ? 'Questionnaire' : 'Line items'} columns
+                      Suppliers
                     </p>
-                    <div className="max-h-64 overflow-y-auto space-y-0.5">
-                      {tabColumns.map((c) => (
-                        <label
-                          key={c.key}
-                          className="flex items-center gap-2 px-1 py-1 text-xs text-gray-700 rounded hover:bg-gray-50 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={!hidden.has(c.key)}
-                            onChange={() => toggleColumn(c.key)}
-                          />
-                          {c.label}
-                        </label>
-                      ))}
+                    <div className="space-y-0.5">
+                      {allSuppliers.map((s) => {
+                        const filteredOut = !applyFilters(
+                          [s],
+                          columns,
+                          filters
+                        ).length;
+                        return (
+                          <label
+                            key={s.invitationId}
+                            className={`flex items-center gap-2 px-1 py-1 text-xs rounded hover:bg-gray-50 ${
+                              filteredOut
+                                ? 'text-gray-300'
+                                : 'text-gray-700 cursor-pointer'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={filteredOut}
+                              checked={
+                                !hiddenSuppliers.has(s.invitationId) && !filteredOut
+                              }
+                              onChange={() => toggleSupplier(s.invitationId)}
+                            />
+                            {s.supplierName}
+                            {filteredOut && ' (filtered out)'}
+                          </label>
+                        );
+                      })}
                     </div>
+                    {tab === 'lineitems' && (
+                      <>
+                        <p className="text-[11px] font-medium text-gray-400 uppercase px-1 pt-2 pb-1">
+                          Line fields
+                        </p>
+                        <div className="space-y-0.5">
+                          {(lineMatrix?.groups ?? []).map((g) => (
+                            <label
+                              key={g.key}
+                              className="flex items-center gap-2 px-1 py-1 text-xs text-gray-700 rounded hover:bg-gray-50 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!hiddenGroups.has(g.key)}
+                                onChange={() => toggleGroup(g.key)}
+                              />
+                              {g.label}
+                            </label>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -254,7 +352,7 @@ export default function QuoteComparisonPage() {
             <Card className="p-3 mb-4">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-medium text-gray-500 uppercase">
-                  Filters
+                  Filter suppliers
                 </p>
                 <div className="flex gap-2">
                   {filters.length > 0 && (
@@ -273,8 +371,8 @@ export default function QuoteComparisonPage() {
               </div>
               {filters.length === 0 && (
                 <p className="text-sm text-gray-400">
-                  No filters. Add one here, or ask the assistant (“hide quotes
-                  over 500k”).
+                  No filters. Drop a supplier column with a rule here, or ask the
+                  assistant (“hide quotes over 500k”).
                 </p>
               )}
               <div className="space-y-2">
@@ -349,96 +447,48 @@ export default function QuoteComparisonPage() {
               </div>
             </Card>
 
-            {/* table */}
-            <Card className="mb-4 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200 text-left text-gray-500">
-                    {visibleColumns.map((c) => (
-                      <th
-                        key={c.key}
-                        className="px-3 py-2 font-medium whitespace-nowrap cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === c.key) {
-                            setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-                          } else {
-                            setSortKey(c.key);
-                            setSortDir('asc');
-                          }
-                        }}
-                      >
-                        {c.label}
-                        {sortKey === c.key && (sortDir === 'asc' ? ' ▲' : ' ▼')}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayedRows.map((row) => (
-                    <tr
-                      key={row.invitationId}
-                      className="border-b border-gray-100 hover:bg-gray-50"
-                    >
-                      {visibleColumns.map((c) => {
-                        const v = c.accessor(row);
-                        return (
-                          <td
-                            key={c.key}
-                            className="px-3 py-2 whitespace-nowrap"
-                          >
-                            {v == null
-                              ? '—'
-                              : c.numeric
-                              ? Number(v).toLocaleString(undefined, {
-                                  maximumFractionDigits: 2,
-                                })
-                              : String(v)}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                  {displayedRows.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={visibleColumns.length}
-                        className="px-3 py-6 text-center text-gray-400"
-                      >
-                        No rows match the filters.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </Card>
-
-            {/* Notes as flagged bullets — Questionnaire tab only */}
-            {tab === 'questionnaire' && (
-              <Card className="p-4">
-                <p className="text-xs font-medium text-gray-500 uppercase mb-3">
-                  Supplier-flagged notes & exceptions
-                </p>
-                {notesByRow.length === 0 ? (
-                  <p className="text-sm text-gray-400">
-                    No supplier flagged anything on their quote.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {notesByRow.map((n) => (
-                      <div key={n.supplier}>
-                        <p className="text-sm font-medium text-gray-900">
-                          {n.supplier}
-                        </p>
-                        <ul className="mt-1 list-disc pl-5 text-sm text-gray-700 space-y-0.5">
-                          {n.bullets.map((b, i) => (
-                            <li key={i}>{b}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                )}
+            {visibleSuppliers.length === 0 ? (
+              <Card className="p-8 text-center text-gray-400">
+                No suppliers match the filters.
               </Card>
+            ) : tab === 'lineitems' ? (
+              <LineGrid
+                matrix={lineMatrix!}
+                groups={visibleGroups}
+                suppliers={visibleSuppliers}
+              />
+            ) : (
+              <>
+                <QuestionnaireGrid
+                  matrix={questionnaireMatrix!}
+                  suppliers={visibleSuppliers}
+                />
+                <Card className="p-4 mt-4">
+                  <p className="text-xs font-medium text-gray-500 uppercase mb-3">
+                    Supplier-flagged notes & exceptions
+                  </p>
+                  {notesByRow.length === 0 ? (
+                    <p className="text-sm text-gray-400">
+                      No supplier flagged anything on their quote.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {notesByRow.map((n) => (
+                        <div key={n.supplier}>
+                          <p className="text-sm font-medium text-gray-900">
+                            {n.supplier}
+                          </p>
+                          <ul className="mt-1 list-disc pl-5 text-sm text-gray-700 space-y-0.5">
+                            {n.bullets.map((b, i) => (
+                              <li key={i}>{b}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              </>
             )}
           </div>
 
@@ -447,7 +497,7 @@ export default function QuoteComparisonPage() {
             <QuoteCompareChat
               rfqId={id}
               columns={columns}
-              rfqCurrency={data.rfq.currency}
+              rfqCurrency={rfqCurrency}
               visibleRowsText={visibleRowsText}
               onApplyFilters={applyChatFilters}
               awarding={awarding}
@@ -457,6 +507,161 @@ export default function QuoteComparisonPage() {
         </div>
       )}
     </AppShell>
+  );
+}
+
+/* ── Line-items grid ─────────────────────────────────────────────────────────
+ * Row per RFQ line item. Column groups are per-line fields; under each, one
+ * sub-column per supplier. Line-item column + first group are sticky so the
+ * comparison stays readable while scrolling right through the field groups. */
+function LineGrid({
+  matrix,
+  groups,
+  suppliers,
+}: {
+  matrix: ReturnType<typeof buildLineMatrix>;
+  groups: ReturnType<typeof buildLineMatrix>['groups'];
+  suppliers: QuoteRow[];
+}) {
+  return (
+    <Card className="overflow-x-auto">
+      <table className="text-sm border-collapse">
+        <thead>
+          <tr className="border-b border-gray-200">
+            <th
+              rowSpan={2}
+              className="sticky left-0 z-20 bg-white px-3 py-2 text-left font-medium text-gray-500 whitespace-nowrap border-r border-gray-200 min-w-[220px]"
+            >
+              Line item
+            </th>
+            {groups.map((g) => (
+              <th
+                key={g.key}
+                colSpan={suppliers.length}
+                className="px-3 py-2 text-center font-semibold text-gray-700 whitespace-nowrap border-r border-gray-200"
+              >
+                {g.label}
+              </th>
+            ))}
+          </tr>
+          <tr className="border-b border-gray-200 text-gray-500">
+            {groups.map((g) =>
+              suppliers.map((s, i) => (
+                <th
+                  key={g.key + s.invitationId}
+                  className={`px-3 py-1.5 font-medium whitespace-nowrap ${
+                    g.numeric ? 'text-right' : 'text-left'
+                  } ${i === suppliers.length - 1 ? 'border-r border-gray-200' : ''}`}
+                >
+                  {s.supplierName}
+                </th>
+              ))
+            )}
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.rows.map((row) => (
+            <tr key={row.lineId} className="border-b border-gray-100 hover:bg-gray-50">
+              <td className="sticky left-0 z-10 bg-white px-3 py-2 whitespace-nowrap border-r border-gray-200">
+                <span className="font-medium text-gray-900">
+                  {row.itemDescription}
+                </span>
+                <span className="block text-xs text-gray-400">
+                  asked {row.askedQuantity.toLocaleString()} {row.unit}
+                </span>
+              </td>
+              {groups.map((g) =>
+                suppliers.map((s, i) => {
+                  const raw = g.value(row.lineId, s);
+                  const txt = g.format(raw);
+                  const muted = txt === '—' || raw === 'no-bid';
+                  return (
+                    <td
+                      key={g.key + s.invitationId}
+                      className={`px-3 py-2 whitespace-nowrap ${
+                        g.numeric ? 'text-right tabular-nums' : 'text-left'
+                      } ${muted ? 'text-gray-300' : 'text-gray-800'} ${
+                        i === suppliers.length - 1 ? 'border-r border-gray-200' : ''
+                      }`}
+                    >
+                      {txt}
+                    </td>
+                  );
+                })
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+/* ── Questionnaire grid ──────────────────────────────────────────────────────
+ * Row per question, one column per supplier. */
+function QuestionnaireGrid({
+  matrix,
+  suppliers,
+}: {
+  matrix: ReturnType<typeof buildQuestionnaireMatrix>;
+  suppliers: QuoteRow[];
+}) {
+  if (matrix.rows.length === 0) {
+    return (
+      <Card className="p-8 text-center text-gray-400">
+        This RFQ has no questionnaire.
+      </Card>
+    );
+  }
+  return (
+    <Card className="overflow-x-auto">
+      <table className="text-sm border-collapse w-full">
+        <thead>
+          <tr className="border-b border-gray-200 text-gray-500">
+            <th className="sticky left-0 z-10 bg-white px-3 py-2 text-left font-medium whitespace-nowrap border-r border-gray-200 min-w-[240px]">
+              Question
+            </th>
+            {suppliers.map((s) => (
+              <th
+                key={s.invitationId}
+                className="px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap min-w-[200px]"
+              >
+                {s.supplierName}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.rows.map((q) => (
+            <tr key={q.fieldId} className="border-b border-gray-100 align-top hover:bg-gray-50">
+              <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium text-gray-900 border-r border-gray-200">
+                {q.label}
+              </td>
+              {suppliers.map((s) => {
+                const v = q.value(s);
+                const empty = v == null || v === '';
+                return (
+                  <td
+                    key={s.invitationId}
+                    className={`px-3 py-2 ${
+                      q.numeric ? 'tabular-nums' : ''
+                    } ${empty ? 'text-gray-300' : 'text-gray-800'}`}
+                  >
+                    {empty
+                      ? '—'
+                      : q.numeric
+                      ? Number(v).toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })
+                      : String(v)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
   );
 }
 
