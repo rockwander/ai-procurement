@@ -10,10 +10,16 @@ interface Msg {
   content: string;
 }
 
+import type { LineItemResponse } from '@/lib/line-response';
+import type { FieldProvenance } from '@/lib/line-response-status';
+
 export interface ChatApplyPayload {
-  fields: Record<string, string | number>;
-  lineItemPrices: Record<string, number>;
-  notes: Record<string, string>;
+  /** buyer-defined quote-level / questionnaire field id -> value */
+  formPatches: Record<string, string | number>;
+  /** rfq line id -> partial fixed-response to merge */
+  linePatches: Record<string, Partial<LineItemResponse>>;
+  /** target id -> provenance (confidence + rationale) for each written value */
+  provenance: Record<string, FieldProvenance>;
 }
 
 interface Attachment {
@@ -32,14 +38,15 @@ interface Attachment {
  */
 export function QuoteChat({
   token,
-  currentFormData,
-  currentLinePrices,
+  activeField,
+  onClearActiveField,
   onApply,
   disabled,
 }: {
   token: string;
-  currentFormData: Record<string, unknown>;
-  currentLinePrices: Record<string, number>;
+  /** a `line:<id>:<field>` id or a form field id the supplier is clarifying */
+  activeField?: { id: string; label: string } | null;
+  onClearActiveField?: () => void;
   onApply: (payload: ChatApplyPayload) => void;
   disabled?: boolean;
 }) {
@@ -47,7 +54,7 @@ export function QuoteChat({
     {
       role: 'assistant',
       content:
-        'Attach your quotation, price list or certificates (PDF, Word, CSV) or paste details here, and I\'ll fill the form. I\'ll tell you what still needs your input.',
+        'Attach your quotation, price list, rate card or certificates (PDF, Word, CSV) or paste the details here. I\'ll read them into your quote and tell you what still needs your input. Click any highlighted field to give me more on it.',
     },
   ]);
   const [input, setInput] = useState('');
@@ -94,29 +101,29 @@ export function QuoteChat({
     try {
       const res = await api<{
         message: string;
-        fields: Record<string, string | number>;
-        lineItemPrices: Record<string, number>;
-        notes: Record<string, string>;
+        formPatches: Record<string, string | number>;
+        linePatches: Record<string, Partial<LineItemResponse>>;
+        provenance: Record<string, FieldProvenance>;
       }>(`/api/quote/${token}/chat`, {
         method: 'POST',
         body: JSON.stringify({
           message: messageToSend || undefined,
           documentTexts: docsToSend.length ? docsToSend : undefined,
-          currentFormData,
-          currentLinePrices,
+          activeField: activeField?.id,
         }),
       });
       setMessages((m) => [...m, { role: 'assistant', content: res.message }]);
       const hasUpdates =
-        Object.keys(res.fields ?? {}).length > 0 ||
-        Object.keys(res.lineItemPrices ?? {}).length > 0;
+        Object.keys(res.formPatches ?? {}).length > 0 ||
+        Object.keys(res.linePatches ?? {}).length > 0;
       if (hasUpdates) {
         onApply({
-          fields: res.fields ?? {},
-          lineItemPrices: res.lineItemPrices ?? {},
-          notes: res.notes ?? {},
+          formPatches: res.formPatches ?? {},
+          linePatches: res.linePatches ?? {},
+          provenance: res.provenance ?? {},
         });
       }
+      onClearActiveField?.();
     } catch (e: any) {
       setMessages((m) => [...m, { role: 'assistant', content: `Error: ${e.message}` }]);
     } finally {
@@ -146,6 +153,23 @@ export function QuoteChat({
 
       {!disabled && (
         <div className="border-t border-gray-200 p-3 space-y-2">
+          {activeField && (
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 pl-2 pr-1 py-0.5">
+                ↳ {activeField.label}
+                <button
+                  onClick={onClearActiveField}
+                  className="text-blue-500 hover:text-blue-800 leading-none px-0.5"
+                  aria-label="Clear field focus"
+                >
+                  ×
+                </button>
+              </span>
+              <span className="text-gray-400">
+                your next message fills this field
+              </span>
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {attachments.map((a, i) => (

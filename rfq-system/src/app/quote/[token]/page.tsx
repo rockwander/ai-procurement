@@ -14,6 +14,7 @@ import {
   normaliseLineResponse,
   committedQty,
 } from '@/lib/line-response';
+import type { ProvenanceMap } from '@/lib/line-response-status';
 
 interface QuoteData {
   rfq: { title: string; summary: string; deadline: string | null; currency: string };
@@ -37,9 +38,11 @@ export default function SupplierQuotePage() {
     lineResponses: {},
     notes: '',
   });
-  // fieldId -> the assistant's fuller answer, when it had to be shortened to
-  // fit the control. Shown as a hint under the field.
-  const [aiNotes, setAiNotes] = useState<Record<string, string>>({});
+  // target id -> confidence + rationale for values the AI wrote. Drives the
+  // preview colour-coding and the hover rationale.
+  const [provenance, setProvenance] = useState<ProvenanceMap>({});
+  // the field the supplier clicked to clarify, if any
+  const [activeField, setActiveField] = useState<{ id: string; label: string } | null>(null);
 
   useEffect(() => {
     api<QuoteData>(`/api/quote/${token}`)
@@ -199,7 +202,11 @@ export default function SupplierQuotePage() {
               value={value}
               onChange={setValue}
               disabled={!!locked}
-              aiNotes={aiNotes}
+              aiNotes={Object.fromEntries(
+                Object.entries(provenance)
+                  .filter(([, p]) => p.rationale)
+                  .map(([id, p]) => [id, p.rationale as string])
+              )}
             />
 
             {!locked && (
@@ -228,34 +235,33 @@ export default function SupplierQuotePage() {
           <div className="lg:sticky lg:top-6">
             <QuoteChat
               token={token}
-              currentFormData={value.formData}
-              currentLinePrices={Object.fromEntries(
-                Object.entries(value.lineResponses)
-                  .filter(([, r]) => r.unitPrice != null)
-                  .map(([id, r]) => [id, r.unitPrice as number])
-              )}
+              activeField={activeField}
+              onClearActiveField={() => setActiveField(null)}
               disabled={!!locked}
               onApply={(payload: ChatApplyPayload) => {
                 setValue((prev) => {
-                  // The AI assist fills unit prices; fold each into the fixed
-                  // per-line response, leaving the supplier to confirm
-                  // can-supply / UoM / available qty.
                   const lineResponses = { ...prev.lineResponses };
-                  for (const [itemId, price] of Object.entries(payload.lineItemPrices)) {
+                  for (const [itemId, patch] of Object.entries(payload.linePatches)) {
                     const li = data.lineItems.find((x) => x.id === itemId);
                     if (!li) continue;
                     const current =
                       lineResponses[itemId] ??
                       emptyLineResponse(li as RFQLineForResponse, data.rfq.currency);
-                    lineResponses[itemId] = { ...current, unitPrice: price, itemId };
+                    lineResponses[itemId] = { ...current, ...patch, itemId };
                   }
                   return {
                     ...prev,
-                    formData: { ...prev.formData, ...payload.fields },
+                    formData: { ...prev.formData, ...payload.formPatches },
                     lineResponses,
                   };
                 });
-                setAiNotes((prev) => ({ ...prev, ...payload.notes }));
+                setProvenance((prev) => {
+                  const next: ProvenanceMap = { ...prev };
+                  for (const [id, p] of Object.entries(payload.provenance)) {
+                    next[id] = { ...next[id], ...p, isDefault: false };
+                  }
+                  return next;
+                });
               }}
             />
           </div>

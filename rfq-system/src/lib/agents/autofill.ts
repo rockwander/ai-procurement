@@ -1,5 +1,7 @@
 import { BaseAgent, AgentResponse } from './base';
 import type { FormSchema, FormField } from '@/lib/form-schema';
+import { QUOTE_UOM_OPTIONS } from '@/lib/line-response';
+import { LINE_FIELD_META, LINE_FIELDS, type LineField } from '@/lib/line-response-status';
 
 export interface AutofillLineItem {
   id: string;
@@ -8,20 +10,43 @@ export interface AutofillLineItem {
   unit: string;
 }
 
-export interface AutofillInput {
-  documentTexts: string[]; // Extracted text from any documents / pasted content the supplier provided
-  formSchema: FormSchema;
-  lineItems: AutofillLineItem[];
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+export type Confidence = 'high' | 'medium' | 'low';
+
+/**
+ * One value the agent produced for a target, with why. `targetId` is:
+ *   - a form field id (quote-level commercial / questionnaire), or
+ *   - `line:<rfqLineItemId>:<field>` where <field> is one of the fixed per-line
+ *     response fields (unitPrice, currency, quotedUom, canSupply, availableQty,
+ *     leadTimeDays, moq).
+ */
+export interface AutofillPatch {
+  value: string | number;
+  confidence: Confidence;
+  /** one short sentence: where this came from / why this value */
+  rationale: string;
 }
 
 export interface AutofillOutput {
-  // targetId -> raw extracted answer. targetId is a form field id OR
-  // "lineitem:<rfqLineItemId>" for a per-line unit price.
-  extractedData: Record<string, string | number>;
-  confidence: Record<string, 'high' | 'medium' | 'low'>;
-  suggestions: string[];
+  patches: Record<string, AutofillPatch>;
+  /** labels of mandatory-ish targets the documents said nothing about */
   missingFields: string[];
+  /** short free-form notes for the supplier (caveats, things to double-check) */
+  suggestions: string[];
+}
+
+export interface AutofillInput {
+  documentTexts: string[];
+  formSchema: FormSchema;
+  lineItems: AutofillLineItem[];
+  rfqCurrency: string;
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /**
+   * When set, the supplier is clarifying ONE specific field — a
+   * `line:<id>:<field>` id or a form field id. The agent should focus its
+   * answer on that target (and anything it can now resolve as a direct
+   * consequence), not rescan everything.
+   */
+  activeField?: string;
 }
 
 const DOC_CHAR_CAP = 20_000;
@@ -34,7 +59,7 @@ export class AutofillAgent extends BaseAgent {
     const startTime = Date.now();
 
     try {
-      const systemPrompt = this.buildSystemPrompt();
+      const systemPrompt = this.buildSystemPrompt(input);
       const userMessage = this.buildUserMessage(input);
 
       const { text, tokensUsed } = await this.callGemini(userMessage, {
@@ -43,19 +68,19 @@ export class AutofillAgent extends BaseAgent {
       });
 
       const durationMs = Date.now() - startTime;
-      const data = this.parseJsonResponse<AutofillOutput>(text);
-      data.extractedData = data.extractedData ?? {};
-      data.confidence = data.confidence ?? {};
-      data.suggestions = data.suggestions ?? [];
-      data.missingFields = data.missingFields ?? [];
+      const data = this.parseAutofillResponse(text);
 
       const costUsd = this.calculateCost(tokensUsed);
 
       await this.logExecution({
         agentType: 'autofill',
         rfqId: rfqInvitationId,
-        inputData: { documentCount: input.documentTexts.length, lineItems: input.lineItems.length },
-        outputData: { fieldsExtracted: Object.keys(data.extractedData).length },
+        inputData: {
+          documentCount: input.documentTexts.length,
+          lineItems: input.lineItems.length,
+          activeField: input.activeField ?? null,
+        },
+        outputData: { patches: Object.keys(data.patches).length },
         modelUsed: this.model,
         tokensUsed,
         costUsd,
@@ -64,7 +89,7 @@ export class AutofillAgent extends BaseAgent {
       });
 
       console.log(
-        `✅ Autofill completed (${Object.keys(data.extractedData).length} targets, $${costUsd.toFixed(4)})`
+        `✅ Autofill completed (${Object.keys(data.patches).length} patches, $${costUsd.toFixed(4)})`
       );
 
       return { success: true, data, tokensUsed, costUsd, durationMs };
@@ -85,60 +110,56 @@ export class AutofillAgent extends BaseAgent {
     }
   }
 
+  /**
+   * Conversational turn: the supplier asked a question or gave information in
+   * chat (optionally scoped to `activeField`). Returns a short reply plus any
+   * patches the message implies.
+   */
   async chatResponse(
     userMessage: string,
-    context: {
-      formSchema: FormSchema;
-      lineItems: AutofillLineItem[];
-      currentFormData: Record<string, unknown>;
-      currentLinePrices?: Record<string, number>;
-      conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
-    }
-  ): Promise<AgentResponse<{ message: string; suggestedUpdates?: Record<string, string | number> }>> {
+    input: AutofillInput
+  ): Promise<AgentResponse<{ message: string; patches: Record<string, AutofillPatch> }>> {
     const startTime = Date.now();
 
     try {
-      const systemPrompt = this.buildChatSystemPrompt(context);
+      const systemPrompt = this.buildSystemPrompt(input, { conversational: true });
 
-      let conversationPrompt = '';
-      if (context.conversationHistory.length > 0) {
-        conversationPrompt = 'Previous conversation:\n';
-        context.conversationHistory.forEach((msg) => {
-          conversationPrompt += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`;
+      let prompt = '';
+      const history = input.conversationHistory ?? [];
+      if (history.length > 0) {
+        prompt += 'Conversation so far:\n';
+        history.slice(-8).forEach((m) => {
+          prompt += `${m.role === 'user' ? 'Supplier' : 'You'}: ${m.content}\n`;
         });
-        conversationPrompt += '\n';
+        prompt += '\n';
       }
-      conversationPrompt += `User: ${userMessage}`;
+      prompt += this.buildTargetsBlock(input);
+      if (input.documentTexts.length) {
+        prompt += `\n## Documents the supplier just provided\n\n`;
+        input.documentTexts.forEach((t, i) => {
+          prompt += `### Document ${i + 1}\n${this.clip(t)}\n\n`;
+        });
+      }
+      prompt += `\n## Supplier's message\n${userMessage}\n\nReply, then give the JSON.`;
 
-      const { text, tokensUsed } = await this.callGemini(conversationPrompt, {
+      const { text, tokensUsed } = await this.callGemini(prompt, {
         systemInstruction: systemPrompt,
-        temperature: 0.6,
+        temperature: 0.5,
       });
 
-      let suggestedUpdates: Record<string, string | number> | undefined;
-      const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-      if (jsonMatch) {
-        try {
-          suggestedUpdates = JSON.parse(jsonMatch[1]);
-        } catch {
-          /* ignore */
-        }
-      }
-
+      const parsed = this.parseAutofillResponse(text);
+      const message = text.replace(/```json[\s\S]*?```/g, '').trim();
       const costUsd = this.calculateCost(tokensUsed);
 
       return {
         success: true,
-        data: {
-          message: text.replace(/```json[\s\S]*?```/g, '').trim(),
-          suggestedUpdates,
-        },
+        data: { message, patches: parsed.patches },
         tokensUsed,
         costUsd,
         durationMs: Date.now() - startTime,
       };
     } catch (error) {
-      console.error('❌ Chat response failed:', error);
+      console.error('❌ Autofill chat failed:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -149,66 +170,125 @@ export class AutofillAgent extends BaseAgent {
 
   // -------------------------------------------------------------------------
 
-  private buildSystemPrompt(): string {
-    return `You extract data from a supplier's own documents (quotations, price lists, spec
-sheets, certificates, company profiles - in any layout) and map it onto a FIXED
-quote form. You cannot change the form. Your job is to decide what in the
-documents answers each form target, and return a value that fits that target's
-type.
+  private parseAutofillResponse(text: string): AutofillOutput {
+    const raw = this.parseJsonResponse<any>(text);
+    const out: AutofillOutput = { patches: {}, missingFields: [], suggestions: [] };
+    const src = raw?.patches ?? raw?.extractedData ?? {};
+    for (const [id, v] of Object.entries(src as Record<string, any>)) {
+      if (v == null) continue;
+      if (typeof v === 'object' && 'value' in v) {
+        const conf = ['high', 'medium', 'low'].includes(v.confidence)
+          ? (v.confidence as Confidence)
+          : 'medium';
+        out.patches[id] = {
+          value: v.value,
+          confidence: conf,
+          rationale: String(v.rationale ?? '').trim(),
+        };
+      } else {
+        // tolerate a bare value
+        out.patches[id] = { value: v, confidence: 'medium', rationale: '' };
+      }
+    }
+    out.missingFields = Array.isArray(raw?.missingFields) ? raw.missingFields.map(String) : [];
+    out.suggestions = Array.isArray(raw?.suggestions) ? raw.suggestions.map(String) : [];
+    return out;
+  }
 
-Return ONLY a JSON object:
+  private clip(t: string): string {
+    return t.length > DOC_CHAR_CAP ? t.slice(0, DOC_CHAR_CAP) + '\n…[truncated]' : t;
+  }
+
+  private buildSystemPrompt(
+    input: AutofillInput,
+    opts: { conversational?: boolean } = {}
+  ): string {
+    const scope = input.activeField
+      ? `\nThe supplier is clarifying ONE field: "${input.activeField}". Focus on that
+target and anything you can now resolve as a direct consequence. Do not rescan
+unrelated fields.\n`
+      : '';
+
+    const role = opts.conversational
+      ? `You help a supplier put together their quotation for an RFQ. Answer their
+question in 1-3 short sentences, then output the JSON patch block.`
+      : `You read a supplier's own documents (quotations, price lists, spec sheets,
+emails, rate cards - any layout) and map what they say onto a FIXED quote
+structure. You cannot change the structure.`;
+
+    return `${role}
+${scope}
+Return the data as a JSON object (in a \`\`\`json code block if you also wrote prose):
 {
-  "extractedData": { "<targetId>": <value>, ... },
-  "confidence":    { "<targetId>": "high" | "medium" | "low", ... },
-  "suggestions":   [ "short notes for the supplier", ... ],
-  "missingFields": [ "<label of a target you found no data for>", ... ]
+  "patches": {
+    "<targetId>": { "value": <value>, "confidence": "high"|"medium"|"low", "rationale": "<one short sentence>" }
+  },
+  "missingFields": [ "<label of a mandatory target the documents/chat did not answer>" ],
+  "suggestions":   [ "<short caveat worth showing the supplier>" ]
 }
 
 Target ids:
-- Form fields are given with their id, label, type and (for dropdowns) allowed
-  options.
-- Each RFQ line item is a target with id "lineitem:<id>" - the value is that
-  item's unit price as a plain number.
+- Quote-level fields: use the id given in [brackets].
+- Per line item, seven fixed fields, id "line:<lineId>:<field>":
+${LINE_FIELDS.map((f) => `    line:<id>:${f}  — ${LINE_FIELD_META[f].label}`).join('\n')}
 
-Rules for values, by field type:
-- number: return a plain number only (no currency, no units, no commas, no
-  ranges). "INR 5,000" -> 5000. "90 days" -> 90. "8-12%" -> 10 (midpoint).
-- select: return EXACTLY one of the allowed options. For a Yes/No question,
-  return "Yes" or "No" based on the document, even if the document gives a long
-  explanation - put the explanation in "suggestions" instead.
-- text / textarea: return the relevant snippet, trimmed.
-- date: return ISO yyyy-mm-dd if you can.
-- lineitem:*: plain number (unit price). If a document gives pricing per item,
-  fill every line you can.
+Value rules:
+- "line:<id>:unitPrice": plain number, per the unit the supplier actually quoted.
+  No currency symbol, no commas. "INR 1,240 / 100 pcs" -> value 1240 with
+  "line:<id>:quotedUom" = "per 100".
+- "line:<id>:currency": an ISO-ish code ("INR", "USD", "EUR"). Only emit it when
+  the document shows a currency DIFFERENT from the RFQ currency
+  (${input.rfqCurrency}); otherwise leave it - the system defaults it.
+- "line:<id>:quotedUom": one of ${QUOTE_UOM_OPTIONS.map((o) => `"${o}"`).join(', ')}.
+  Only emit when the document states a unit different from the line's asked unit.
+- "line:<id>:canSupply": "full" | "partial" | "no". "no" when the supplier says
+  they don't quote / can't make that item; "partial" when they can supply less
+  than the asked quantity (also set availableQty).
+- "line:<id>:availableQty": plain number - only when it is LESS than the asked qty.
+- "line:<id>:leadTimeDays", "line:<id>:moq": plain numbers.
+- Yes/No questionnaire fields: exactly "Yes" or "No"; put any explanation in
+  suggestions.
+- text fields: the relevant trimmed snippet.
+
+confidence:
+- "high": the document states it explicitly and unambiguously.
+- "medium": stated but needs interpretation, or implied strongly.
+- "low": inferred / assumed from indirect wording ("same as last year", a
+  footnote, a range you took the midpoint of).
+
+rationale: one short sentence a buyer would accept, e.g.
+"Stated on line 3 of the price list" or
+"Inferred 38 from 'rest same as last year' + the previous quote".
 
 General:
-- Only include a target in extractedData if the documents actually support a
-  value. Do not guess. If unsure, lower the confidence or leave it out and add
-  the label to missingFields.
-- "TBD", "to be confirmed", "not stated" in a document = no value; leave it out
-  and list it in missingFields.
-- Prefer explicit numbers/statements over inference.`;
+- Never invent a value the documents / chat do not support. If a mandatory
+  target has no support, leave it out and add its label to missingFields.
+- "TBD" / "to be confirmed" / "not stated" = no value.`;
   }
 
-  private buildUserMessage(input: AutofillInput): string {
-    let m = `## Quote form targets\n\n### Form fields\n`;
-    for (const f of input.formSchema.fields ?? []) {
-      m += this.describeField(f);
-    }
+  private buildTargetsBlock(input: AutofillInput): string {
+    let m = `## Quote-level fields\n`;
+    const fields = input.formSchema.fields ?? [];
+    if (fields.length === 0) m += `(none)\n`;
+    for (const f of fields) m += this.describeField(f);
 
-    m += `\n### Line item unit prices (target id in brackets)\n`;
+    m += `\n## Line items (RFQ currency: ${input.rfqCurrency})\n`;
     if (input.lineItems.length === 0) {
       m += `(none)\n`;
     } else {
       for (const li of input.lineItems) {
-        m += `- [lineitem:${li.id}] ${li.itemDescription} - ask qty ${li.quantity} ${li.unit}\n`;
+        m += `- lineId "${li.id}": ${li.itemDescription} — asked ${li.quantity} ${li.unit}\n`;
       }
     }
+    return m;
+  }
+
+  private buildUserMessage(input: AutofillInput): string {
+    let m = this.buildTargetsBlock(input);
 
     m += `\n## Supplier documents / provided content\n\n`;
     input.documentTexts.forEach((text, i) => {
-      const clipped = text.length > DOC_CHAR_CAP ? text.slice(0, DOC_CHAR_CAP) + '\n…[truncated]' : text;
-      m += `### Document ${i + 1}\n${clipped}\n\n`;
+      m += `### Document ${i + 1}\n${this.clip(text)}\n\n`;
     });
 
     if (input.conversationHistory && input.conversationHistory.length > 0) {
@@ -224,57 +304,10 @@ General:
 
   private describeField(f: FormField): string {
     const req = f.required ? ' (required)' : '';
-    let line = `- [${f.id}] "${f.label}" - type ${f.type}${req}`;
+    let line = `- [${f.id}] "${f.label}" — type ${f.type}${req}`;
     if (f.type === 'select' && f.options?.length) {
-      line += ` - options: ${f.options.map((o) => `"${o}"`).join(', ')}`;
-    }
-    if (f.type === 'number' && f.validation) {
-      const { min, max } = f.validation;
-      if (min != null || max != null) line += ` - range ${min ?? '-'}..${max ?? '-'}`;
+      line += ` — options: ${f.options.map((o) => `"${o}"`).join(', ')}`;
     }
     return line + `\n`;
-  }
-
-  private buildChatSystemPrompt(context: {
-    formSchema: FormSchema;
-    lineItems: AutofillLineItem[];
-    currentFormData: Record<string, unknown>;
-    currentLinePrices?: Record<string, number>;
-  }): string {
-    const fields = (context.formSchema.fields ?? [])
-      .map((f) => this.describeField(f).trimEnd())
-      .join('\n');
-    const lines = context.lineItems
-      .map(
-        (li) =>
-          `- [lineitem:${li.id}] ${li.itemDescription} (qty ${li.quantity} ${li.unit})` +
-          (context.currentLinePrices?.[li.id] ? ` - currently ${context.currentLinePrices[li.id]}` : '')
-      )
-      .join('\n');
-
-    return `You are helping a supplier complete a FIXED RFQ quote form. You cannot change
-the form.
-
-Form fields:
-${fields || '(none)'}
-
-Line item unit price targets:
-${lines || '(none)'}
-
-Current form values:
-${JSON.stringify(context.currentFormData, null, 2)}
-
-Your role:
-- Answer the supplier's questions about the form.
-- When they give you information (typed or pasted), work out which target it
-  fills and propose an update.
-- Keep proposed values in the same shape rules as extraction: numbers are plain
-  numbers; select fields use exactly one allowed option; line prices are plain
-  numbers under "lineitem:<id>".
-
-If you propose updates, include them as a JSON code block:
-\`\`\`json
-{ "<targetId>": <value> }
-\`\`\``;
   }
 }
