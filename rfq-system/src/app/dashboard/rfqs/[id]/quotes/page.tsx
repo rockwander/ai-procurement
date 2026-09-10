@@ -37,8 +37,11 @@ export default function QuoteComparisonPage() {
   const [tab, setTab] = useState<ColumnTab>('lineitems');
   // suppliers (by invitationId) the buyer has manually hidden
   const [hiddenSuppliers, setHiddenSuppliers] = useState<Set<string>>(new Set());
-  // line-item field groups the buyer has hidden
-  const [hiddenGroups, setHiddenGroups] = useState<Set<string>>(new Set());
+  // line-item field groups the buyer has toggled off (null = not yet seeded
+  // from the group defaults; see the effect below)
+  const [hiddenGroups, setHiddenGroups] = useState<Set<string> | null>(null);
+  // questionnaire questions (by fieldId) the buyer has toggled off
+  const [hiddenQuestions, setHiddenQuestions] = useState<Set<string>>(new Set());
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [filters, setFilters] = useState<Filter[]>([]);
 
@@ -90,9 +93,29 @@ export default function QuoteComparisonPage() {
     [data, visibleSuppliers]
   );
 
+  // Seed the hidden-groups set from each group's default once the matrix exists.
+  useEffect(() => {
+    if (hiddenGroups === null && lineMatrix) {
+      setHiddenGroups(
+        new Set(lineMatrix.groups.filter((g) => g.defaultHidden).map((g) => g.key))
+      );
+    }
+  }, [hiddenGroups, lineMatrix]);
+
   const visibleGroups = useMemo(
-    () => (lineMatrix?.groups ?? []).filter((g) => !hiddenGroups.has(g.key)),
+    () =>
+      (lineMatrix?.groups ?? []).filter(
+        (g) => !(hiddenGroups ?? new Set()).has(g.key)
+      ),
     [lineMatrix, hiddenGroups]
+  );
+
+  const visibleQuestionRows = useMemo(
+    () =>
+      (questionnaireMatrix?.rows ?? []).filter(
+        (q) => !hiddenQuestions.has(q.fieldId)
+      ),
+    [questionnaireMatrix, hiddenQuestions]
   );
 
   // Notes for the Questionnaire tab: rendered as flagged bullets.
@@ -129,9 +152,9 @@ export default function QuoteComparisonPage() {
       out.push(`- ${row.itemDescription} (asked ${row.askedQuantity} ${row.unit}) — ${parts.join('; ')}`);
     }
 
-    if (questionnaireMatrix.rows.length) {
+    if (visibleQuestionRows.length) {
       out.push('\nQuestionnaire (answer per supplier, in the order above):');
-      for (const q of questionnaireMatrix.rows) {
+      for (const q of visibleQuestionRows) {
         const vals = s
           .map((sc) => {
             const sup = visibleSuppliers.find(
@@ -149,7 +172,7 @@ export default function QuoteComparisonPage() {
       out.push(`\nFlagged by ${n.supplier}: ${n.bullets.join(' | ')}`);
     }
     return out.join('\n');
-  }, [lineMatrix, questionnaireMatrix, visibleGroups, visibleSuppliers, notesByRow]);
+  }, [lineMatrix, questionnaireMatrix, visibleGroups, visibleQuestionRows, visibleSuppliers, notesByRow]);
 
   function toggleSupplier(invitationId: string) {
     setHiddenSuppliers((prev) => {
@@ -161,8 +184,16 @@ export default function QuoteComparisonPage() {
 
   function toggleGroup(key: string) {
     setHiddenGroups((prev) => {
-      const next = new Set(prev);
+      const next = new Set(prev ?? []);
       next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  function toggleQuestion(fieldId: string) {
+    setHiddenQuestions((prev) => {
+      const next = new Set(prev);
+      next.has(fieldId) ? next.delete(fieldId) : next.add(fieldId);
       return next;
     });
   }
@@ -287,7 +318,7 @@ export default function QuoteComparisonPage() {
                   Show / hide ▾
                 </Button>
                 {showColumnMenu && (
-                  <div className="absolute right-0 z-10 mt-1 w-60 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+                  <div className="absolute right-0 z-10 mt-1 w-64 rounded-lg border border-gray-200 bg-white p-2 shadow-lg max-h-[70vh] overflow-y-auto">
                     <p className="text-[11px] font-medium text-gray-400 uppercase px-1 pb-1">
                       Suppliers
                     </p>
@@ -321,11 +352,18 @@ export default function QuoteComparisonPage() {
                         );
                       })}
                     </div>
-                    {tab === 'lineitems' && (
+
+                    {tab === 'lineitems' ? (
                       <>
-                        <p className="text-[11px] font-medium text-gray-400 uppercase px-1 pt-2 pb-1">
-                          Line fields
-                        </p>
+                        <MenuSectionHeading
+                          label="Line fields"
+                          onAll={() => setHiddenGroups(new Set())}
+                          onNone={() =>
+                            setHiddenGroups(
+                              new Set((lineMatrix?.groups ?? []).map((g) => g.key))
+                            )
+                          }
+                        />
                         <div className="space-y-0.5">
                           {(lineMatrix?.groups ?? []).map((g) => (
                             <label
@@ -334,7 +372,7 @@ export default function QuoteComparisonPage() {
                             >
                               <input
                                 type="checkbox"
-                                checked={!hiddenGroups.has(g.key)}
+                                checked={!(hiddenGroups ?? new Set()).has(g.key)}
                                 onChange={() => toggleGroup(g.key)}
                               />
                               {g.label}
@@ -342,6 +380,40 @@ export default function QuoteComparisonPage() {
                           ))}
                         </div>
                       </>
+                    ) : (
+                      (questionnaireMatrix?.rows.length ?? 0) > 0 && (
+                        <>
+                          <MenuSectionHeading
+                            label="Questions"
+                            onAll={() => setHiddenQuestions(new Set())}
+                            onNone={() =>
+                              setHiddenQuestions(
+                                new Set(
+                                  (questionnaireMatrix?.rows ?? []).map(
+                                    (q) => q.fieldId
+                                  )
+                                )
+                              )
+                            }
+                          />
+                          <div className="space-y-0.5">
+                            {(questionnaireMatrix?.rows ?? []).map((q) => (
+                              <label
+                                key={q.fieldId}
+                                className="flex items-start gap-2 px-1 py-1 text-xs text-gray-700 rounded hover:bg-gray-50 cursor-pointer"
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="mt-0.5"
+                                  checked={!hiddenQuestions.has(q.fieldId)}
+                                  onChange={() => toggleQuestion(q.fieldId)}
+                                />
+                                <span>{q.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </>
+                      )
                     )}
                   </div>
                 )}
@@ -460,7 +532,8 @@ export default function QuoteComparisonPage() {
             ) : (
               <>
                 <QuestionnaireGrid
-                  matrix={questionnaireMatrix!}
+                  rows={visibleQuestionRows}
+                  hasQuestions={(questionnaireMatrix?.rows.length ?? 0) > 0}
                   suppliers={visibleSuppliers}
                 />
                 <Card className="p-4 mt-4">
@@ -600,16 +673,25 @@ function LineGrid({
 /* ── Questionnaire grid ──────────────────────────────────────────────────────
  * Row per question, one column per supplier. */
 function QuestionnaireGrid({
-  matrix,
+  rows,
+  hasQuestions,
   suppliers,
 }: {
-  matrix: ReturnType<typeof buildQuestionnaireMatrix>;
+  rows: ReturnType<typeof buildQuestionnaireMatrix>['rows'];
+  hasQuestions: boolean;
   suppliers: QuoteRow[];
 }) {
-  if (matrix.rows.length === 0) {
+  if (!hasQuestions) {
     return (
       <Card className="p-8 text-center text-gray-400">
         This RFQ has no questionnaire.
+      </Card>
+    );
+  }
+  if (rows.length === 0) {
+    return (
+      <Card className="p-8 text-center text-gray-400">
+        All questions hidden — turn some back on in “Show / hide”.
       </Card>
     );
   }
@@ -632,7 +714,7 @@ function QuestionnaireGrid({
           </tr>
         </thead>
         <tbody>
-          {matrix.rows.map((q) => (
+          {rows.map((q) => (
             <tr key={q.fieldId} className="border-b border-gray-100 align-top hover:bg-gray-50">
               <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium text-gray-900 border-r border-gray-200">
                 {q.label}
@@ -662,6 +744,32 @@ function QuestionnaireGrid({
         </tbody>
       </table>
     </Card>
+  );
+}
+
+/** Section label in the Show / hide menu, with All / None shortcuts. */
+function MenuSectionHeading({
+  label,
+  onAll,
+  onNone,
+}: {
+  label: string;
+  onAll: () => void;
+  onNone: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between px-1 pt-2 pb-1">
+      <p className="text-[11px] font-medium text-gray-400 uppercase">{label}</p>
+      <span className="text-[11px] text-blue-600">
+        <button onClick={onAll} className="hover:underline">
+          All
+        </button>
+        {' · '}
+        <button onClick={onNone} className="hover:underline">
+          None
+        </button>
+      </span>
+    </div>
   );
 }
 

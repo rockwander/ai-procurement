@@ -31,6 +31,8 @@ export interface LineFieldGroup {
   key: string;
   label: string;
   numeric: boolean;
+  /** hidden until the buyer turns it on in the Show / hide menu */
+  defaultHidden?: boolean;
   /** raw comparable value for a supplier on a line — number, string, or null */
   value: (lineId: string, supplier: QuoteRow) => number | string | null;
   /** display string for a cell */
@@ -155,6 +157,41 @@ export function buildLineMatrix(
         return r?.leadTimeDays ?? null;
       },
       format: num,
+    },
+    {
+      key: 'moq',
+      label: 'MOQ',
+      numeric: true,
+      defaultHidden: true,
+      value: (lineId, s) => {
+        const r = resp(lineId, s);
+        return r?.moq ?? null;
+      },
+      format: num,
+    },
+    {
+      key: 'currency',
+      label: 'Quoted currency',
+      numeric: false,
+      defaultHidden: true,
+      value: (lineId, s) => {
+        const r = resp(lineId, s);
+        if (!r || r.canSupply === 'no') return null;
+        return r.currency || rfqCurrency;
+      },
+      format: dash,
+    },
+    {
+      key: 'quotedUom',
+      label: 'Quoted unit',
+      numeric: false,
+      defaultHidden: true,
+      value: (lineId, s) => {
+        const r = resp(lineId, s);
+        if (!r || r.canSupply === 'no') return null;
+        return r.quotedUom || null;
+      },
+      format: dash,
     },
   ];
 
