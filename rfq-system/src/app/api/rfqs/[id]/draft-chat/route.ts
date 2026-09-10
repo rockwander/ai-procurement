@@ -10,8 +10,9 @@ import {
   serverError,
 } from '@/lib/api';
 import { RFQDraftingAgent, type RFQThreadEntry } from '@/lib/agents/rfq-drafting';
+import { RFQEditAgent } from '@/lib/agents/rfq-edit';
 import { applyRFQDocument } from '@/lib/rfq-persist';
-import type { RFQDocument } from '@/lib/rfq-document';
+import { type RFQDocument, diffFieldIds } from '@/lib/rfq-document';
 import {
   documentFromOutline,
   outlineToText,
@@ -26,6 +27,10 @@ import { sanitizeText } from '@/lib/doc-extract';
  *                       sub-headings); stored as rfqs.pendingOutline
  *   action 'apply'    → { tickedSectionIds } → rebuild the RFQ from the ticked
  *                       sections, regenerate PDF + form, clear the outline
+ *   action 'edit'     → { message } → natural-language refinement of the
+ *                       already-applied RFQ document (rename a field, make it
+ *                       required, change its type, add / remove fields). Patches
+ *                       the current document; no outline round-trip.
  */
 
 export async function GET(
@@ -76,7 +81,7 @@ export async function POST(
     const body = await request.json();
     const { message, action, tickedSectionIds } = body as {
       message?: string;
-      action?: 'message' | 'outline' | 'apply';
+      action?: 'message' | 'outline' | 'apply' | 'edit';
       tickedSectionIds?: string[];
     };
     const text = sanitizeText(message ?? '');
@@ -117,7 +122,8 @@ export async function POST(
             `${applied.questionnaire.length} question(s), ` +
             `${applied.termsAndConditions.length} term(s).` +
             (excluded.length ? ` Left out: ${excluded.join('; ')}.` : '') +
-            ` Keep chatting to revise, or use the form builder for direct edits.`,
+            ` Now just tell me what to change — rename a field, make one required, ` +
+            `change a type, add or remove a field or question.`,
         })
         .returning();
 
@@ -126,6 +132,101 @@ export async function POST(
         applied: true,
         rfqDocument: applied,
         pendingOutline: null,
+      });
+    }
+
+    // ----------------------------------------------------------------- edit --
+    // Natural-language refinement of the already-applied RFQ document.
+    if (action === 'edit') {
+      if (!text) return badRequest('message is required');
+
+      const currentDoc = rfq.rfqDocument as RFQDocument | null;
+      if (!currentDoc || !rfq.hasContent) {
+        await db.insert(rfqDraftMessages).values({
+          rfqId: id,
+          role: 'user',
+          kind: 'message',
+          content: text,
+        });
+        const [saved] = await db
+          .insert(rfqDraftMessages)
+          .values({
+            rfqId: id,
+            role: 'assistant',
+            kind: 'message',
+            content:
+              "There's no RFQ to refine yet. Add your requirements, hit \"Build RFQ outline\", confirm it — then I can rename fields, change types, make things required, and add or remove fields.",
+          })
+          .returning();
+        return NextResponse.json({ assistant: saved, edited: false });
+      }
+
+      await db.insert(rfqDraftMessages).values({
+        rfqId: id,
+        role: 'user',
+        kind: 'message',
+        content: text,
+      });
+
+      const history = await db
+        .select()
+        .from(rfqDraftMessages)
+        .where(eq(rfqDraftMessages.rfqId, id))
+        .orderBy(asc(rfqDraftMessages.createdAt));
+      const thread: RFQThreadEntry[] = history.map((h) => ({
+        role: h.role === 'assistant' ? 'assistant' : 'user',
+        kind: (h.kind === 'attachment'
+          ? 'attachment'
+          : h.kind === 'update'
+          ? 'update'
+          : 'message') as RFQThreadEntry['kind'],
+        content: h.content,
+        attachmentName: h.attachmentName ?? undefined,
+      }));
+
+      const editAgent = new RFQEditAgent();
+      const result = await editAgent.applyEdit(
+        {
+          doc: currentDoc,
+          instruction: text,
+          thread,
+          buyerName: user.name,
+          rfqId: id,
+        },
+        id
+      );
+
+      if (!result.success || !result.data) {
+        const [saved] = await db
+          .insert(rfqDraftMessages)
+          .values({
+            rfqId: id,
+            role: 'assistant',
+            kind: 'message',
+            content: `I couldn't apply that change: ${result.error ?? 'unknown error'}. Try rephrasing it.`,
+          })
+          .returning();
+        return NextResponse.json({ assistant: saved, edited: false }, { status: 502 });
+      }
+
+      const applied = await applyRFQDocument(id, result.data.doc, 'ai');
+      const changedFieldIds = diffFieldIds(currentDoc, applied);
+
+      const [saved] = await db
+        .insert(rfqDraftMessages)
+        .values({
+          rfqId: id,
+          role: 'assistant',
+          kind: 'apply',
+          content: result.data.summary,
+        })
+        .returning();
+
+      return NextResponse.json({
+        assistant: saved,
+        edited: true,
+        rfqDocument: applied,
+        changedFieldIds,
       });
     }
 

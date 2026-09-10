@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
-import { RFQDocumentBuilder } from '@/components/RFQDocumentBuilder';
+import { RFQDocumentPreview } from '@/components/RFQDocumentPreview';
 import { OutlineReview } from '@/components/OutlineReview';
 import { Button, Card, Spinner, ErrorText, PaperclipIcon, SendIcon } from '@/components/ui';
 import { api } from '@/lib/fetcher';
@@ -20,7 +20,7 @@ interface DraftMessage {
   attachmentName: string | null;
 }
 
-type View = 'pdf' | 'builder';
+type View = 'pdf' | 'preview';
 
 export default function NewRFQPage() {
   const router = useRouter();
@@ -40,10 +40,11 @@ export default function NewRFQPage() {
   const [applying, setApplying] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [savingDoc, setSavingDoc] = useState(false);
   const [error, setError] = useState('');
   const [view, setView] = useState<View>('pdf');
   const [pdfNonce, setPdfNonce] = useState(0);
+  // field ids the last AI edit touched — briefly highlighted in the preview
+  const [changedFieldIds, setChangedFieldIds] = useState<string[]>([]);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -72,7 +73,7 @@ export default function NewRFQPage() {
             role: 'assistant',
             kind: 'message',
             content:
-              'Attach your business requirements, policy or spec documents (or paste content) and describe what you need. When you\'re ready, hit "Build / update RFQ" and I\'ll propose an outline for you to confirm.',
+              'Attach your business requirements, policy or spec documents (or paste content) and describe what you need. When you\'re ready, hit "Build RFQ outline" and I\'ll propose an outline for you to confirm. After that, just tell me what to change.',
             attachmentName: null,
           },
         ]);
@@ -81,6 +82,13 @@ export default function NewRFQPage() {
       }
     })();
   }, []);
+
+  // The composer's primary button. Before the RFQ exists it just files a note;
+  // once there's an applied RFQ, a plain message is a natural-language edit.
+  function submitComposer() {
+    if (hasContent) edit();
+    else send('message');
+  }
 
   async function send(action: 'message' | 'outline') {
     if (!rfqId || busy) return;
@@ -120,6 +128,48 @@ export default function NewRFQPage() {
     }
   }
 
+  async function edit() {
+    if (!rfqId || busy) return;
+    const text = input.trim();
+    if (!text) return;
+    setBusy(true);
+    setError('');
+    setMessages((m) => [
+      ...m,
+      {
+        id: `tmp-${Date.now()}`,
+        role: 'user',
+        kind: 'message',
+        content: text,
+        attachmentName: null,
+      },
+    ]);
+    setInput('');
+    try {
+      const res = await api<{
+        assistant: DraftMessage;
+        edited: boolean;
+        rfqDocument?: RFQDocument;
+        changedFieldIds?: string[];
+      }>(`/api/rfqs/${rfqId}/draft-chat`, {
+        method: 'POST',
+        body: JSON.stringify({ message: text, action: 'edit' }),
+      });
+      setMessages((m) => [...m, res.assistant]);
+      if (res.edited && res.rfqDocument) {
+        setDoc(res.rfqDocument);
+        setPdfNonce((n) => n + 1);
+        setView('preview');
+        setChangedFieldIds(res.changedFieldIds ?? []);
+        setTimeout(() => setChangedFieldIds([]), 2500);
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function apply(tickedIds: string[]) {
     if (!rfqId || applying) return;
     setApplying(true);
@@ -140,7 +190,7 @@ export default function NewRFQPage() {
       setPendingOutline(null);
       setDoc(res.rfqDocument);
       setHasContent(true);
-      setView('pdf');
+      setView('preview');
       setPdfNonce((n) => n + 1);
     } catch (e: any) {
       setError(e.message);
@@ -188,29 +238,6 @@ export default function NewRFQPage() {
     setUploading(false);
   }
 
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  function onDocEdit(next: RFQDocument) {
-    setDoc(next);
-    if (!rfqId) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    setSavingDoc(true);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        const res = await api<{ rfqDocument: RFQDocument }>(`/api/rfqs/${rfqId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ rfqDocument: next }),
-        });
-        setDoc(res.rfqDocument);
-        setHasContent(true);
-        setPdfNonce((n) => n + 1);
-      } catch (e: any) {
-        setError(e.message);
-      } finally {
-        setSavingDoc(false);
-      }
-    }, 800);
-  }
-
   function saveAndOpen() {
     if (rfqId) router.push(`/dashboard/rfqs/${rfqId}`);
   }
@@ -237,7 +264,6 @@ export default function NewRFQPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-gray-900">Create RFQ</h1>
         <div className="flex items-center gap-2">
-          {savingDoc && <span className="text-xs text-gray-400">saving…</span>}
           <Button variant="secondary" onClick={saveAndOpen}>
             {hasContent ? 'Done — open RFQ' : 'Save & exit'}
           </Button>
@@ -342,9 +368,13 @@ export default function NewRFQPage() {
                 rows={3}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Describe the need, paste content, or ask for a change…  Attach docs with the clip."
+                placeholder={
+                  hasContent
+                    ? 'Ask for a change — rename a field, make it required, change a type, add or remove a field…'
+                    : 'Describe the need, paste content, or ask for a change…  Attach docs with the clip.'
+                }
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send('message');
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitComposer();
                 }}
               />
               <div className="absolute inset-x-2 bottom-1.5 flex items-center justify-between">
@@ -363,9 +393,13 @@ export default function NewRFQPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => send('message')}
+                  onClick={submitComposer}
                   disabled={busy || !input.trim()}
-                  title="Send note (Cmd/Ctrl+Enter)"
+                  title={
+                    hasContent
+                      ? 'Apply this change (Cmd/Ctrl+Enter)'
+                      : 'Send note (Cmd/Ctrl+Enter)'
+                  }
                   className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
                 >
                   <SendIcon />
@@ -387,9 +421,12 @@ export default function NewRFQPage() {
             </Button>
 
             <p className="text-xs text-gray-400">
-              Send adds a note to the chat. “Build / Rebuild outline” reads the whole
-              conversation and proposes an outline to confirm. Attach{' '}
-              {SUPPORTED_DOC_EXTENSIONS.join(', ')} — multiple at once.
+              {hasContent
+                ? 'Send refines the RFQ — rename a field, make it required, change a type, add or remove a field or question. '
+                : 'Send adds a note to the chat. '}
+              “Build / Rebuild outline” reads the whole conversation and proposes an
+              outline to confirm. Attach {SUPPORTED_DOC_EXTENSIONS.join(', ')} — multiple
+              at once.
             </p>
           </div>
         </Card>
@@ -407,14 +444,14 @@ export default function NewRFQPage() {
                 PDF document
               </button>
               <button
-                onClick={() => setView('builder')}
+                onClick={() => setView('preview')}
                 className={`px-3 py-1 rounded ${
-                  view === 'builder'
+                  view === 'preview'
                     ? 'bg-gray-900 text-white'
                     : 'text-gray-600 hover:bg-gray-100'
                 }`}
               >
-                Form builder
+                RFQ preview
               </button>
             </div>
             {hasContent && (
@@ -433,7 +470,7 @@ export default function NewRFQPage() {
             {!hasContent ? (
               <div className="p-8 text-center text-sm text-gray-400">
                 No RFQ yet. Add details in the conversation, press{' '}
-                <span className="font-medium">Build / update RFQ</span>, then confirm the
+                <span className="font-medium">Build RFQ outline</span>, then confirm the
                 outline.
               </div>
             ) : view === 'pdf' ? (
@@ -444,8 +481,8 @@ export default function NewRFQPage() {
                 title="RFQ PDF"
               />
             ) : doc ? (
-              <div className="p-4">
-                <RFQDocumentBuilder doc={doc} onChange={onDocEdit} />
+              <div className="p-5">
+                <RFQDocumentPreview doc={doc} changedFieldIds={changedFieldIds} />
               </div>
             ) : (
               <Spinner label="Loading…" />

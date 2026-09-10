@@ -21,6 +21,35 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-10 — Buyer refines the RFQ by chat; AI never auto-marks fields mandatory
+**Refinement:** Two changes to create-RFQ:
+
+1. **The "Form builder" tab is retired for a read-only RFQ document preview.**
+   The right pane is now **PDF document** + **RFQ preview**; the preview renders
+   the RFQ as a document (like the supplier's quotation preview), with **no
+   input controls and no inline editing**. Every change to the form definition —
+   rename a field/question, make it required or optional, change its datatype
+   (text / number / choice; yes-no / free text / file), edit choice options,
+   add / remove / reorder fields — is made by **typing the request in the
+   create-RFQ conversation**. An RFQ Edit Agent applies it to the current
+   document (ids preserved), the RFQ is re-persisted (schema + line items + PDF
+   re-derived), and the changed rows briefly highlight in the preview. The
+   **outline → confirm → apply** flow for structural (re)generation is unchanged
+   — natural-language edits are a refinement layer on the already-applied RFQ.
+
+2. **The drafting AI must not mark any field mandatory on its own.** Generated /
+   regenerated RFQs have every commercial field and questionnaire question
+   optional unless the buyer explicitly asked for it to be required.
+
+**Affects:** MASTER_SPEC §2 step 1 (Create RFQ — the form-builder view becomes a
+read-only preview; edits go through the chat); Drafting Agent; new
+`RFQEditAgent`; `POST /api/rfqs/[id]/draft-chat` (`action: 'edit'`);
+`RFQDocumentPreview` replaces `RFQDocumentBuilder`. Supersedes the UI parts of
+the two 2026-09-07 form-builder entries (the RFQ document model + PDF are
+unchanged).
+**Status:** implemented (production build green; not verified in a running app —
+the local dev environment has no Postgres database).
+
 ## 2026-09-10 — Supplier can comment on any passage; caveats become structured exceptions
 **Refinement:** In the supplier document preview, **any text is clickable**, not
 just fields — a section heading, the opening line, and each of the buyer's

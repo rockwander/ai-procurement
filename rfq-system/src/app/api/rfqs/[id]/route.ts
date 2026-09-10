@@ -44,8 +44,9 @@ export async function GET(
 
 /**
  * Update a draft RFQ.
- * - `rfqDocument`: a full document from the form builder — applied immediately
- *   (re-derives form schema + line items, snapshots as a 'manual' version).
+ * - `rfqDocument`: a full RFQ document — applied immediately (re-derives form
+ *   schema + line items, snapshots as a 'manual' version). Used for programmatic
+ *   edits; the buyer UI edits the RFQ through the create-RFQ chat.
  * - `deadline`: convenience field.
  */
 export async function PATCH(

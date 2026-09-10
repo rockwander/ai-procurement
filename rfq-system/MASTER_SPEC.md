@@ -61,21 +61,20 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
           agent posts a **revised outline** and the review restarts.
      3. **Apply.** A **"Confirm & apply to RFQ"** button in the chat writes
         the RFQ from the **ticked** sub-headings — regenerating both views
-        (PDF + form builder) and storing a snapshot.
+        (PDF + RFQ preview) and storing a snapshot.
 
    The buyer can keep chatting and go through outline → confirm → apply
-   again to revise. The form builder remains available between rounds for
-   direct edits (below).
+   again to revise. Between rounds, the buyer refines individual fields by
+   **typing the request in the same chat** (below) — there is no form builder.
 
-   - **RFQ = two synchronized views of one artifact:**
+   - **RFQ = two views of one artifact:**
      1. a **PDF document** (the human-readable RFQ — see structure below), and
-     2. a **single-column form builder** representing the same RFQ.
+     2. a **read-only RFQ preview** rendering the same RFQ as a document
+        (the buyer counterpart to the supplier's quotation preview).
    - The screen **defaults to showing the PDF document**. The buyer can
-     switch to the form-builder view. Both views are kept **simultaneously
-     in sync** — each apply regenerates both, and form-builder edits are
-     reflected in both.
+     switch to the RFQ preview. Both are regenerated on every apply / edit.
 
-   **RFQ document structure** (the PDF; the form builder mirrors it):
+   **RFQ document structure** (the PDF; the RFQ preview mirrors it):
    - Header block: Buyer, RFQ ID, Quote deadline, Expected delivery,
      Currency, Validity.
    - **1. Line items** — table: Line #, Item, Specification, Qty, Unit
@@ -91,26 +90,26 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
 
    See **Appendix A** for a full worked example of the RFQ document.
 
-   - **Form builder (single column)** operates on the same RFQ the PDF
-     renders. It **defines the supplier response form** (field names, types,
-     which are mandatory, order) — it is not for entering quote data.
-     Suppliers receive this form by email with a copy of the PDF for
-     reference. It exposes every section as editable groups:
-     - **Line items** — add / delete / reorder rows; edit item,
-       specification, qty, unit.
-     - **Commercial information requested** — the per-line-item fields
-       vendors must fill; add / delete / reorder / rename, set type
-       (text / number / choice, with an options editor for choice), toggle
-       mandatory. Each field shows a greyed preview of the control the
-       supplier will see.
-     - **Quality questionnaire** — add / delete / reorder / edit questions,
-       set response type (Yes-No / free text / file), toggle mandatory, with
-       the same supplier-facing preview.
-     - **Header** and **Terms & conditions** — editable text.
-   - **Direct edits in the form builder apply immediately** to the RFQ and
-     re-render the PDF — no AI call. The chat path (outline → confirm →
-     apply) is the only AI regeneration. Both paths keep the two views in
-     sync.
+   - **RFQ preview (read-only)** renders the same RFQ the PDF renders, as a
+     document — line-item table, the quote-level commercial fields (each with
+     its datatype and a "required" marker), the questionnaire, the terms. It
+     **defines the supplier response form**: suppliers receive this form by
+     email with a copy of the PDF for reference. There are **no input
+     controls and no inline editing** in this view.
+   - **The buyer refines the form by chatting.** In the create-RFQ
+     conversation the buyer types requests like "make Freight charges
+     required", "rename GST to Tax %", "add a yes/no question about 30-day
+     credit", "make Payment terms a dropdown of Net 30 / Net 45 / Net 60",
+     "remove the price validity field", "change GST to a number". An **RFQ
+     Edit Agent** applies the instruction to the current RFQ document (every
+     existing id preserved), the RFQ is re-persisted (form schema + line
+     items + PDF re-derived), and the changed rows briefly highlight in the
+     preview. This is distinct from the outline → confirm → apply flow, which
+     handles *structural* (re)generation; edits are a refinement layer on the
+     already-applied RFQ.
+   - **The AI never marks a field mandatory on its own.** On generation /
+     regeneration, every commercial field and questionnaire question is
+     optional unless the buyer explicitly asked for it to be required.
 
    **Persistence.** A draft RFQ row is created as soon as the buyer starts
    the chat. The full chat thread (messages + attached-document text +
@@ -230,6 +229,42 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
+
+### 2026-09-10 — Buyer refines the RFQ by chat; AI never auto-marks fields mandatory
+
+**Refinement:** Two changes to create-RFQ (§2 step 1):
+
+1. **The "Form builder" tab is retired for a read-only RFQ document preview.**
+   The right pane now shows **PDF document** and **RFQ preview** — the preview
+   renders the RFQ document the way the supplier's quotation preview renders
+   theirs (a document, not a form of input controls). There is **no inline
+   editing** on the buyer side. All changes to the form definition — rename a
+   field or question, make it required / optional, change its datatype
+   (text / number / choice; yes-no / free text / file), edit choice options,
+   add / remove / reorder fields — are made by **typing the request in the
+   create-RFQ conversation**. A new `RFQEditAgent` applies the instruction to
+   the current `RFQDocument` (ids preserved), the doc is re-persisted (form
+   schema + line items + PDF re-derived), and the changed rows briefly
+   highlight in the preview. The **outline → confirm → apply** flow for
+   *structural* (re)generation is unchanged; natural-language edits are a
+   refinement layer on top of an already-applied document.
+
+2. **The drafting AI must not mark any field mandatory on its own.** When the
+   AI generates or regenerates the RFQ, every commercial field and
+   questionnaire question is optional unless the buyer explicitly said that
+   field must be provided. (Previously GST / freight / the ISO question came
+   back required by default.)
+
+**Affects:** §2 step 1 (Create RFQ — the "form builder" view becomes a
+read-only preview; edits go through the chat); Drafting Agent (required = false
+unless asked); new Edit Agent; `draft-chat` route (`action: 'edit'`).
+**Supersedes** the UI parts of *"Form builder must define the form, not fill
+it"* (2026-09-07) and *"Conversational RFQ creation with synced PDF + form
+builder"* (2026-09-07) — the `RFQDocument` model and PDF are unchanged; only the
+builder UI is replaced.
+
+**Status:** implemented (build green; not verified in a running app — the dev
+environment has no Postgres database).
 
 ### 2026-09-10 — Comment on any passage; caveats become structured exceptions
 
