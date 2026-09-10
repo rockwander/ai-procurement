@@ -242,8 +242,31 @@ An email-submitted quotation is identical downstream to a link-submitted one
   and lets the buyer reply "as the supplier" through the same processor the
   webhook uses — so the flow is testable without a verified mail domain.
 
-See `REQUIREMENT_supplier-doc-preview.md` and `REQUIREMENT_quote-via-email.md`
-for the full requirements.
+### Review / negotiation round
+
+From **Compare quotes**, a supplier column header opens that supplier's full
+submitted quotation at `/dashboard/rfqs/[id]/quotes/[invitationId]`. The buyer
+clicks any response value to attach a comment, collects several, and sends them
+with **Send for Review** or **Send for Negotiation** — mechanically identical,
+differing only in the copy to the supplier and the recorded `intent`
+(review = clarify / complete; negotiation = revise terms).
+
+- Sending stamps the round's `quote_comments` as `sent`, flips the invitation
+  to **`negotiating`**, seeds an editable `quote_drafts` row from the
+  submission, and emails the supplier (`quote_review` / `quote_negotiation`,
+  `[ref:]` subject marker, comments grouped by line / section).
+- The supplier's link is **unlocked** while `negotiating`; the buyer's notes
+  show as `💬 buyer` markers pinned to the fields. The supplier edits anything
+  (no field lock for the POC) and resubmits.
+- Resubmit **overwrites** the `quote_submissions` row in place (bumps
+  `revision`, sets `revised_at`), marks that round's comments `addressed`,
+  returns the invitation to `submitted`, and emails the buyer
+  (`quote_revised`). Works from the link and by email reply.
+- Rounds repeat. Award is never blocked; a supplier still in `negotiating` is
+  excluded from evaluation until they resubmit.
+
+See `REQUIREMENT_supplier-doc-preview.md`, `REQUIREMENT_quote-via-email.md`,
+and `REQUIREMENT_quote-negotiation.md` for the full requirements.
 
 ---
 
@@ -269,8 +292,9 @@ model no longer available to the key) rolls straight to the next model.
 
 ## 5. Platform
 
-- **DB**: Neon serverless Postgres (`drizzle-orm/neon-http`). 14 tables
-  (adds `rfq_draft_messages`, `rfq_document_versions`, `quote_drafts`).
+- **DB**: Neon serverless Postgres (`drizzle-orm/neon-http`). 15 tables
+  (adds `rfq_draft_messages`, `rfq_document_versions`, `quote_drafts`,
+  `quote_comments`).
 - **Email**: Resend — outbound (invitation / reminder / PO / quote-ack) and
   **inbound** (supplier email replies → `POST /api/quote/inbound` webhook,
   signature-verified with `RESEND_INBOUND_SECRET`). Test mode delivers
@@ -287,6 +311,32 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
+
+### 2026-09-11 — Review / negotiate a submitted quotation
+
+**Refinement:** The buyer needs to send a submitted quote back to the supplier
+for changes. From Compare quotes, expand a supplier to see their full submitted
+quotation on its own page; click any response value to attach a comment;
+collect several; send with **Send for Review** or **Send for Negotiation**.
+Both email the supplier and reopen their quotation for editing; on resubmit it
+locks again.
+
+- Review vs Negotiation: identical mechanics, different copy + a recorded
+  `intent`. Review = clarify / complete (missing value, mismatched answer,
+  info the supplier or AI skipped). Negotiation = revise terms.
+- POC scope: supplier can edit **everything** on resubmit (no field lock); no
+  threaded comment replies (they just edit and resubmit); the submission row is
+  overwritten with a `revision` counter (no version history); award is never
+  blocked (a supplier still `negotiating` is excluded from evaluation until
+  they resubmit).
+- New: `rfq_invitations.status` value `negotiating`; `quote_comments` table;
+  `quote_submissions.revision` / `revised_at`; `email_logs.type` values
+  `quote_review` / `quote_negotiation` / `quote_revised`. Buyer page
+  `/dashboard/rfqs/[id]/quotes/[invitationId]`. See
+  `REQUIREMENT_quote-negotiation.md`.
+
+**Affects:** §3 (Supplier Flow), §5 (Platform — DB), workflow step 4
+(Compare / Award).
 
 ### 2026-09-10 — A partial quotation means "not offered" on the other lines
 

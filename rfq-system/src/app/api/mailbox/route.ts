@@ -54,7 +54,11 @@ export async function GET(request: NextRequest) {
         !!r.rfqInvitationId &&
         !!r.supplierEmail &&
         r.recipientEmail.toLowerCase() !== APP_ADDRESS &&
-        (r.type === 'rfq_invitation' || r.type === 'reminder' || r.type === 'quote_ack'),
+        (r.type === 'rfq_invitation' ||
+          r.type === 'reminder' ||
+          r.type === 'quote_ack' ||
+          r.type === 'quote_review' ||
+          r.type === 'quote_negotiation'),
     }));
 
     return NextResponse.json({ emails });

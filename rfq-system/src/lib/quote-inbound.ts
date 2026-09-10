@@ -3,8 +3,8 @@
 // simulator (src/app/api/dev/mailbox/reply). See REQUIREMENT_quote-via-email.md.
 
 import { db } from '@/db';
-import { rfqInvitations, quoteSubmissions, chatMessages } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { rfqs, users, rfqInvitations, quoteSubmissions, quoteComments, chatMessages } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { loadQuoteContext } from '@/lib/quote-access';
 import { normalizeRFQDocument } from '@/lib/rfq-document';
 import { AutofillAgent, type AutofillLineItem } from '@/lib/agents/autofill';
@@ -19,7 +19,7 @@ import {
   deleteDraft,
 } from '@/lib/quote-draft';
 import { assessQuoteAck, groupBlockers } from '@/lib/quote-ack';
-import { sendQuoteAckEmail, sendPlainReply } from '@/lib/email';
+import { sendQuoteAckEmail, sendPlainReply, sendQuoteRevisedEmail } from '@/lib/email';
 
 export type InboundResult =
   | { status: 'no-ref' }
@@ -192,8 +192,10 @@ export async function processInboundEmail(
   });
 
   if (assessment.decision === 'submit') {
+    const wasRevision = ctx.invitation.status === 'negotiating' && !!ctx.submission;
     await autoSubmit(ctx, merged, lines, rfqCurrency);
     await deleteDraft(ctx.invitation.id);
+    if (wasRevision) await notifyBuyerOfRevision(ctx, appUrl);
     await sendQuoteAckEmail(
       {
         to: parsed.sender,
@@ -301,19 +303,86 @@ async function autoSubmit(
     0
   );
 
-  await db.insert(quoteSubmissions).values({
-    rfqInvitationId: ctx.invitation.id,
-    formData: merged.formData,
-    lineItems,
-    totalAmount,
-    currency: rfqCurrency,
-    notes: merged.notes || null,
-  });
+  // A resubmit during a review / negotiation round updates the existing
+  // submission in place and marks that round's comments addressed.
+  const isRevision = ctx.invitation.status === 'negotiating' && !!ctx.submission;
+  const now = new Date();
+
+  if (isRevision && ctx.submission) {
+    await db
+      .update(quoteSubmissions)
+      .set({
+        formData: merged.formData,
+        lineItems,
+        totalAmount,
+        currency: rfqCurrency,
+        notes: merged.notes || null,
+        revision: (ctx.submission.revision ?? 0) + 1,
+        revisedAt: now,
+      })
+      .where(eq(quoteSubmissions.id, ctx.submission.id));
+    await db
+      .update(quoteComments)
+      .set({ status: 'addressed' })
+      .where(
+        and(
+          eq(quoteComments.rfqInvitationId, ctx.invitation.id),
+          eq(quoteComments.status, 'sent')
+        )
+      );
+  } else {
+    await db.insert(quoteSubmissions).values({
+      rfqInvitationId: ctx.invitation.id,
+      formData: merged.formData,
+      lineItems,
+      totalAmount,
+      currency: rfqCurrency,
+      notes: merged.notes || null,
+    });
+  }
 
   await db
     .update(rfqInvitations)
-    .set({ status: 'submitted', submittedAt: new Date() })
+    .set({ status: 'submitted', submittedAt: now })
     .where(eq(rfqInvitations.id, ctx.invitation.id));
+}
+
+async function notifyBuyerOfRevision(
+  ctx: NonNullable<Awaited<ReturnType<typeof loadQuoteContext>>>,
+  appUrl: string
+) {
+  try {
+    const [rfqRow] = await db
+      .select({ createdBy: rfqs.createdBy })
+      .from(rfqs)
+      .where(eq(rfqs.id, ctx.rfq.id));
+    const [buyer] = rfqRow
+      ? await db
+          .select({ email: users.email, name: users.name })
+          .from(users)
+          .where(eq(users.id, rfqRow.createdBy))
+      : [];
+    const [current] = await db
+      .select({ revision: quoteSubmissions.revision })
+      .from(quoteSubmissions)
+      .where(eq(quoteSubmissions.rfqInvitationId, ctx.invitation.id));
+    if (buyer?.email) {
+      await sendQuoteRevisedEmail(
+        {
+          to: buyer.email,
+          buyerName: buyer.name || 'there',
+          supplierName: ctx.supplier.companyName,
+          rfqTitle: ctx.rfq.title,
+          rfqId: ctx.rfq.id,
+          reviewLink: `${appUrl}/dashboard/rfqs/${ctx.rfq.id}/quotes/${ctx.invitation.id}`,
+          round: current?.revision ?? 1,
+        },
+        ctx.invitation.id
+      );
+    }
+  } catch (e) {
+    console.error('revised-quote notification failed', e);
+  }
 }
 
 async function replyUnmatched(to: string, subject: string, appUrl: string) {

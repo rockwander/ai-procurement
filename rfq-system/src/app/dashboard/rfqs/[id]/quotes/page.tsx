@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 import { AppShell } from '@/components/AppShell';
 import { Button, Card, Input, Select, Spinner, ErrorText, StatusBadge } from '@/components/ui';
 import { QuoteCompareChat } from '@/components/QuoteCompareChat';
@@ -64,8 +65,13 @@ export default function QuoteComparisonPage() {
     [data]
   );
 
+  // A quote out for review / negotiation keeps its last submission on screen,
+  // marked, until the supplier resubmits.
   const submittedRows = useMemo(
-    () => (data?.quotes ?? []).filter((q) => q.status === 'submitted'),
+    () =>
+      (data?.quotes ?? []).filter(
+        (q) => q.status === 'submitted' || q.status === 'negotiating'
+      ),
     [data]
   );
 
@@ -528,6 +534,7 @@ export default function QuoteComparisonPage() {
                 matrix={lineMatrix!}
                 groups={visibleGroups}
                 suppliers={visibleSuppliers}
+                rfqId={id}
               />
             ) : (
               <>
@@ -535,6 +542,7 @@ export default function QuoteComparisonPage() {
                   rows={visibleQuestionRows}
                   hasQuestions={(questionnaireMatrix?.rows.length ?? 0) > 0}
                   suppliers={visibleSuppliers}
+                  rfqId={id}
                 />
                 <Card className="p-4 mt-4">
                   <p className="text-xs font-medium text-gray-500 uppercase mb-3">
@@ -587,14 +595,35 @@ export default function QuoteComparisonPage() {
  * Row per RFQ line item. Column groups are per-line fields; under each, one
  * sub-column per supplier. Line-item column + first group are sticky so the
  * comparison stays readable while scrolling right through the field groups. */
+/** Supplier column header: name links to the full quote, plus a negotiating tag. */
+function SupplierHead({ s, rfqId }: { s: QuoteRow; rfqId: string }) {
+  return (
+    <span className="inline-flex flex-col items-start">
+      <Link
+        href={`/dashboard/rfqs/${rfqId}/quotes/${s.invitationId}`}
+        className="text-blue-700 hover:underline"
+      >
+        {s.supplierName} ↗
+      </Link>
+      {s.status === 'negotiating' && (
+        <span className="text-[10px] font-normal text-purple-600">
+          out for review / negotiation
+        </span>
+      )}
+    </span>
+  );
+}
+
 function LineGrid({
   matrix,
   groups,
   suppliers,
+  rfqId,
 }: {
   matrix: ReturnType<typeof buildLineMatrix>;
   groups: ReturnType<typeof buildLineMatrix>['groups'];
   suppliers: QuoteRow[];
+  rfqId: string;
 }) {
   return (
     <Card className="overflow-x-auto">
@@ -626,7 +655,7 @@ function LineGrid({
                     g.numeric ? 'text-right' : 'text-left'
                   } ${i === suppliers.length - 1 ? 'border-r border-gray-200' : ''}`}
                 >
-                  {s.supplierName}
+                  <SupplierHead s={s} rfqId={rfqId} />
                 </th>
               ))
             )}
@@ -676,10 +705,12 @@ function QuestionnaireGrid({
   rows,
   hasQuestions,
   suppliers,
+  rfqId,
 }: {
   rows: ReturnType<typeof buildQuestionnaireMatrix>['rows'];
   hasQuestions: boolean;
   suppliers: QuoteRow[];
+  rfqId: string;
 }) {
   if (!hasQuestions) {
     return (
@@ -708,7 +739,7 @@ function QuestionnaireGrid({
                 key={s.invitationId}
                 className="px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap min-w-[200px]"
               >
-                {s.supplierName}
+                <SupplierHead s={s} rfqId={rfqId} />
               </th>
             ))}
           </tr>

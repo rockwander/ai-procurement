@@ -114,6 +114,7 @@ const STATUS_COLORS: Record<string, 'gray' | 'green' | 'blue' | 'yellow' | 'red'
   sent: 'blue',
   viewed: 'yellow',
   submitted: 'green',
+  negotiating: 'purple',
   evaluating: 'purple',
   awarded: 'green',
   cancelled: 'red',

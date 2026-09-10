@@ -10,7 +10,14 @@ interface MailboxEmail {
   id: string;
   recipientEmail: string;
   subject: string;
-  type: 'rfq_invitation' | 'reminder' | 'purchase_order' | 'quote_ack';
+  type:
+    | 'rfq_invitation'
+    | 'reminder'
+    | 'purchase_order'
+    | 'quote_ack'
+    | 'quote_review'
+    | 'quote_negotiation'
+    | 'quote_revised';
   status: string;
   errorMessage: string | null;
   bodyHtml: string | null;
@@ -30,6 +37,9 @@ const TYPE_LABEL: Record<MailboxEmail['type'], string> = {
   reminder: 'Reminder',
   purchase_order: 'Purchase order',
   quote_ack: 'Quote reply / ack',
+  quote_review: 'Review request',
+  quote_negotiation: 'Negotiation request',
+  quote_revised: 'Revised quote',
 };
 
 export default function MailboxPage() {

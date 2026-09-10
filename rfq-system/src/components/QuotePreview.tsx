@@ -77,6 +77,7 @@ export function QuotePreview({
   onActivatePassage,
   onRemoveException,
   disabled,
+  buyerComments = [],
 }: {
   buyerTitle: string;
   schema: FormSchema;
@@ -94,8 +95,18 @@ export function QuotePreview({
   onActivatePassage: (p: PassageRef) => void;
   onRemoveException: (index: number) => void;
   disabled?: boolean;
+  /** the buyer's review / negotiation notes, pinned to their field ids */
+  buyerComments?: Array<{ fieldId: string; fieldLabel: string; comment: string }>;
 }) {
   const fields = useMemo(() => sortedFields(schema), [schema]);
+  const commentByField = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const c of buyerComments) {
+      if (!m.has(c.fieldId)) m.set(c.fieldId, []);
+      m.get(c.fieldId)!.push(c.comment);
+    }
+    return m;
+  }, [buyerComments]);
   const sections = useMemo(
     () => [...schema.sections].sort((a, b) => a.orderIndex - b.orderIndex),
     [schema]
@@ -124,7 +135,7 @@ export function QuotePreview({
     fields.filter((f) => (f.section ?? '') === (id ?? ''));
 
   // shared props for the inline value cells
-  const cellCtx = { activeFieldId, disabled, onActivateField, onConfirmField };
+  const cellCtx = { activeFieldId, disabled, onActivateField, onConfirmField, commentByField };
 
   const passageProps = { activeFieldId, disabled, onActivatePassage, exceptions };
 
@@ -562,7 +573,25 @@ type CellCtx = {
   disabled?: boolean;
   onActivateField: (f: ActiveField | null) => void;
   onConfirmField: (targetId: string) => void;
+  commentByField?: Map<string, string[]>;
 };
+
+/** The buyer's review / negotiation note pinned to a field. */
+function BuyerCommentMark({
+  comments,
+}: {
+  comments?: string[];
+}) {
+  if (!comments || comments.length === 0) return null;
+  return (
+    <span
+      className="ml-1 align-middle rounded bg-purple-100 px-1 text-[11px] text-purple-700 font-sans cursor-help"
+      title={comments.join('\n\n')}
+    >
+      💬 buyer{comments.length > 1 ? ` ×${comments.length}` : ''}
+    </span>
+  );
+}
 
 const STATE_TEXT: Record<FieldState, string> = {
   confident: 'text-gray-900',
@@ -591,6 +620,7 @@ function InlineText({
   onActivateField,
   onEditStart,
   onCommit,
+  commentByField,
 }: CellCtx & {
   targetId: string;
   fieldLabel: string;
@@ -664,6 +694,7 @@ function InlineText({
           ⓘ
         </span>
       )}
+      <BuyerCommentMark comments={commentByField?.get(targetId)} />
     </span>
   );
 }
@@ -750,6 +781,7 @@ function InlineSelect(
           ⓘ
         </span>
       )}
+      <BuyerCommentMark comments={p.commentByField?.get(p.targetId)} />
     </span>
   );
 }
@@ -834,6 +866,7 @@ function SupplyCell(
           ⓘ confirm
         </span>
       )}
+      <BuyerCommentMark comments={p.commentByField?.get(targetId)} />
     </span>
   );
 }

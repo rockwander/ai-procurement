@@ -21,6 +21,21 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-11 — Review / negotiate a submitted quotation
+**Refinement:** From Compare quotes, the buyer expands a supplier to view their
+full submitted quotation on a dedicated page, clicks any response value to
+attach a comment, collects several, and sends them with **Send for Review** or
+**Send for Negotiation**. Both email the supplier and reopen their quotation
+for editing; on resubmit it locks again (invitation status `negotiating` →
+`submitted`, `quote_submissions` row overwritten with a `revision` counter).
+Review vs Negotiation: same mechanics, different copy + recorded `intent`
+(review = clarify/complete; negotiation = revise terms). POC scope: supplier
+edits everything on resubmit, no threaded replies, no version history, award
+never blocked.
+**Affects:** MASTER_SPEC §3 (Supplier Flow), §5 (Platform), Compare/Award step.
+New `REQUIREMENT_quote-negotiation.md`.
+**Status:** implemented
+
 ## 2026-09-10 — A partial quotation means "not offered" on the other lines
 **Refinement:** When a supplier uploads a document quoting only some line items,
 the uncovered lines are marked "not offered" (`canSupply: 'no'`, struck through,

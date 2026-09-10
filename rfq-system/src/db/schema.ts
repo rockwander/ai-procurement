@@ -130,7 +130,10 @@ export const rfqInvitations = pgTable('rfq_invitations', {
   supplierId: text('supplier_id').notNull().references(() => suppliers.id),
   // Unguessable token for the supplier's public form link (no login required)
   token: text('token').notNull().$defaultFn(() => crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')).unique(),
-  status: text('status', { enum: ['sent', 'viewed', 'submitted', 'declined'] }).notNull().default('sent'),
+  // 'negotiating' = the buyer sent the submitted quote back with comments
+  // (for review or negotiation); the supplier can edit and resubmit, which
+  // returns it to 'submitted'. See REQUIREMENT_quote-negotiation.md.
+  status: text('status', { enum: ['sent', 'viewed', 'submitted', 'declined', 'negotiating'] }).notNull().default('sent'),
   sentAt: timestamp('sent_at'),
   viewedAt: timestamp('viewed_at'),
   submittedAt: timestamp('submitted_at'),
@@ -176,7 +179,43 @@ export const quoteSubmissions = pgTable('quote_submissions', {
   // document-preview flow.
   exceptions: jsonb('exceptions'),
   aiExtractedData: jsonb('ai_extracted_data'),  // data extracted from supplier docs
+  // Bumped each time the supplier resubmits after a review / negotiation round.
+  // 0 = original submission. The row is overwritten in place (no version
+  // history for the POC). See REQUIREMENT_quote-negotiation.md.
+  revision: integer('revision').notNull().default(0),
+  revisedAt: timestamp('revised_at'),
   submittedAt: timestamp('submitted_at').notNull().defaultNow(),
+});
+
+// Quote Comments — the buyer's per-field notes on a submitted quote, sent back
+// to the supplier as a review or negotiation round. The supplier edits their
+// quote and resubmits (no threaded replies for the POC). See
+// REQUIREMENT_quote-negotiation.md.
+export const quoteComments = pgTable('quote_comments', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  rfqInvitationId: text('rfq_invitation_id')
+    .notNull()
+    .references(() => rfqInvitations.id, { onDelete: 'cascade' }),
+  // 1 for the first round, incremented per send.
+  round: integer('round').notNull().default(1),
+  // The quote value the comment is pinned to: a per-line field
+  // ('line:<lineItemId>:<field>'), a buyer-defined form field id, a whole line
+  // ('line:<lineItemId>'), or the quote overall ('__quote').
+  fieldId: text('field_id').notNull(),
+  // Human-readable anchor, e.g. "Line 3 — Unit price" or "Payment terms".
+  fieldLabel: text('field_label').notNull(),
+  // Snapshot of what the supplier had submitted for that field when the
+  // comment was made (for the email + the supplier's context).
+  quotedValue: text('quoted_value'),
+  comment: text('comment').notNull(),
+  // Same mechanics; only the copy to the supplier differs.
+  intent: text('intent', { enum: ['review', 'negotiation'] }).notNull().default('review'),
+  // 'open' = still being drafted by the buyer; 'sent' = emailed to the
+  // supplier this round; 'addressed' = the supplier has since resubmitted.
+  status: text('status', { enum: ['open', 'sent', 'addressed'] }).notNull().default('open'),
+  createdBy: text('created_by').notNull().references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  sentAt: timestamp('sent_at'),
 });
 
 // Purchase Orders
@@ -229,7 +268,17 @@ export const emailLogs = pgTable('email_logs', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   recipientEmail: text('recipient_email').notNull(),
   subject: text('subject').notNull(),
-  type: text('type', { enum: ['rfq_invitation', 'reminder', 'purchase_order', 'quote_ack'] }).notNull(),
+  type: text('type', {
+    enum: [
+      'rfq_invitation',
+      'reminder',
+      'purchase_order',
+      'quote_ack',
+      'quote_review',
+      'quote_negotiation',
+      'quote_revised',
+    ],
+  }).notNull(),
   rfqId: text('rfq_id').references(() => rfqs.id),
   rfqInvitationId: text('rfq_invitation_id').references(() => rfqInvitations.id),
   purchaseOrderId: text('purchase_order_id').references(() => purchaseOrders.id),
@@ -274,6 +323,9 @@ export type NewQuoteSubmission = typeof quoteSubmissions.$inferInsert;
 
 export type QuoteDraft = typeof quoteDrafts.$inferSelect;
 export type NewQuoteDraft = typeof quoteDrafts.$inferInsert;
+
+export type QuoteComment = typeof quoteComments.$inferSelect;
+export type NewQuoteComment = typeof quoteComments.$inferInsert;
 
 export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
 export type NewPurchaseOrder = typeof purchaseOrders.$inferInsert;

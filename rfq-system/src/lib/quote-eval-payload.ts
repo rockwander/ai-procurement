@@ -1,6 +1,6 @@
 import { db } from '@/db';
 import { rfqs, rfqLineItems, rfqInvitations, quoteSubmissions, suppliers } from '@/db/schema';
-import { eq, asc } from 'drizzle-orm';
+import { eq, and, asc } from 'drizzle-orm';
 import { normalizeRFQDocument } from '@/lib/rfq-document';
 import {
   normaliseLineResponse,
@@ -50,7 +50,14 @@ export async function loadQuoteEvalPayload(
       quoteSubmissions,
       eq(quoteSubmissions.rfqInvitationId, rfqInvitations.id)
     )
-    .where(eq(rfqInvitations.rfqId, rfqId));
+    // Only quotes that currently stand. A quote out for review / negotiation
+    // (status 'negotiating') is excluded until the supplier resubmits.
+    .where(
+      and(
+        eq(rfqInvitations.rfqId, rfqId),
+        eq(rfqInvitations.status, 'submitted')
+      )
+    );
 
   const rfqDoc = rfq.rfqDocument
     ? normalizeRFQDocument(rfq.rfqDocument, { rfqId: rfq.id, buyer: '', fillDefaults: false })

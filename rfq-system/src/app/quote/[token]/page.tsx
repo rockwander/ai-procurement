@@ -41,6 +41,17 @@ interface QuoteData {
   lineItems: LineItemInput[];
   submitted: boolean;
   submission: { formData: any; lineItems: any[]; exceptions?: QuoteException[] } | null;
+  negotiation: {
+    intent: 'review' | 'negotiation';
+    round: number;
+    comments: Array<{
+      fieldId: string;
+      fieldLabel: string;
+      quotedValue: string | null;
+      comment: string;
+      intent: 'review' | 'negotiation';
+    }>;
+  } | null;
   draft: {
     lineResponses: Record<string, any>;
     formData: Record<string, any>;
@@ -58,6 +69,7 @@ export default function SupplierQuotePage() {
   const [submitting, setSubmitting] = useState(false);
   const [justSubmitted, setJustSubmitted] = useState(false);
   const [fromEmail, setFromEmail] = useState(false);
+  const [negotiation, setNegotiation] = useState<QuoteData['negotiation']>(null);
 
   const [value, setValue] = useState<QuoteFormValue>({
     formData: {},
@@ -104,6 +116,7 @@ export default function SupplierQuotePage() {
           notes: d.draft?.notes ?? '',
         });
         if (d.submission?.exceptions?.length) setExceptions(d.submission.exceptions);
+        setNegotiation(d.negotiation ?? null);
         // Provenance: from the persisted draft if there is one; otherwise seed
         // the system-inferred defaults as "assumed" (amber) so the supplier is
         // nudged to confirm currency / UoM etc.
@@ -316,6 +329,33 @@ export default function SupplierQuotePage() {
             </div>
           ) : (
             <>
+              {negotiation && (
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 text-sm text-purple-900">
+                  <p className="font-semibold mb-1">
+                    {negotiation.intent === 'negotiation'
+                      ? 'The buyer would like to revise a few points'
+                      : 'The buyer has asked for some clarifications'}
+                  </p>
+                  <p className="mb-2">
+                    Their notes are pinned to the relevant values below
+                    (<span className="rounded bg-purple-100 px-1">💬 buyer</span>).
+                    Make any changes and resubmit — your quotation is{' '}
+                    <strong>not locked</strong> right now.
+                  </p>
+                  <ul className="list-disc pl-5 space-y-0.5">
+                    {negotiation.comments.map((c, i) => (
+                      <li key={i}>
+                        <span className="font-medium">{c.fieldLabel}</span>
+                        {c.quotedValue != null && (
+                          <span className="text-purple-500"> ({c.quotedValue})</span>
+                        )}
+                        {' — '}
+                        {c.comment}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {fromEmail && (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
                   We filled this in from your email reply. Check the highlighted
@@ -347,6 +387,7 @@ export default function SupplierQuotePage() {
                 setExceptions((prev) => prev.filter((_, j) => j !== i))
               }
               disabled={!!locked}
+              buyerComments={negotiation?.comments ?? []}
             />
 
             {!locked && (
@@ -362,7 +403,11 @@ export default function SupplierQuotePage() {
                   onClick={submit}
                   disabled={submitting || attention.total > 0}
                 >
-                  {submitting ? 'Submitting…' : 'Submit quote (final)'}
+                  {submitting
+                    ? 'Submitting…'
+                    : negotiation
+                    ? 'Resubmit revised quote (final)'
+                    : 'Submit quote (final)'}
                 </Button>
                 <p className="text-xs text-gray-400 mt-1">
                   You cannot edit the quote after submitting.

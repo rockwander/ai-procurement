@@ -547,6 +547,240 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+// ---------------------------------------------------------------------------
+// Quote review / negotiation — the buyer sends a submitted quote back with
+// per-field comments for the supplier to address. Same mechanics for both;
+// only the copy differs (`intent`). See REQUIREMENT_quote-negotiation.md.
+// ---------------------------------------------------------------------------
+
+export interface QuoteCommentGroup {
+  /** e.g. "Line 3 — Corrugated box" or "Commercial terms" */
+  heading: string;
+  items: Array<{
+    /** field anchor label, e.g. "Unit price" */
+    label: string;
+    /** what the supplier had quoted, if any */
+    quotedValue?: string | null;
+    /** the buyer's note */
+    comment: string;
+  }>;
+}
+
+export interface SendQuoteNegotiationParams {
+  to: string;
+  supplierName: string;
+  rfqTitle: string;
+  rfqId: string;
+  token: string;
+  formLink: string;
+  intent: 'review' | 'negotiation';
+  round: number;
+  groups: QuoteCommentGroup[];
+}
+
+export async function sendQuoteNegotiationEmail(
+  params: SendQuoteNegotiationParams,
+  rfqInvitationId?: string
+) {
+  try {
+    const copy =
+      params.intent === 'negotiation'
+        ? {
+            base: `Let's discuss your quotation — ${params.rfqTitle}`,
+            headerColor: '#7c3aed',
+            headline: 'We would like to revise a few points',
+            intro: `Thank you for your quotation for <strong>${escapeHtml(
+              params.rfqTitle
+            )}</strong>. Before we proceed we would like to revise the points
+              below. Please open your quotation at the link, make any changes you
+              can, and resubmit.`,
+          }
+        : {
+            base: `Clarifications on your quotation — ${params.rfqTitle}`,
+            headerColor: '#2563eb',
+            headline: 'A few points need your attention',
+            intro: `We have reviewed your quotation for <strong>${escapeHtml(
+              params.rfqTitle
+            )}</strong> and need clarification or completion on the points below.
+              Please open your quotation at the link, address them, and resubmit.`,
+          };
+
+    const subject = subjectWithRef(copy.base, params.rfqId, params.token);
+
+    const groupsHtml = params.groups
+      .map(
+        (g) => `
+          <h3 style="margin:18px 0 6px;">${escapeHtml(g.heading)}</h3>
+          <ul>
+            ${g.items
+              .map(
+                (it) =>
+                  `<li style="margin-bottom:6px;"><strong>${escapeHtml(
+                    it.label
+                  )}</strong>${
+                    it.quotedValue != null && it.quotedValue !== ''
+                      ? ` — you quoted <em>${escapeHtml(String(it.quotedValue))}</em>`
+                      : ''
+                  }<br>${escapeHtml(it.comment)}</li>`
+              )
+              .join('')}
+          </ul>`
+      )
+      .join('');
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: ${copy.headerColor}; color: white; padding: 18px; text-align: center; }
+          .content { background: #f9fafb; padding: 28px; }
+          .button { display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 5px; margin: 18px 0; }
+          ul { padding-left: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header"><h2 style="margin:0;">${copy.headline}</h2></div>
+          <div class="content">
+            <p>Dear ${escapeHtml(params.supplierName)},</p>
+            <p>${copy.intro}</p>
+            ${groupsHtml}
+            <p style="text-align:center;">
+              <a href="${params.formLink}" class="button">Open &amp; revise your quotation</a>
+            </p>
+            <p>Once you resubmit, your quotation is locked again. You can also
+              reply to this email with your changes — keep the subject line
+              unchanged so we can match it.</p>
+            <p>Best regards,<br>Procurement Team</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: params.to,
+      subject,
+      html,
+    });
+
+    await db.insert(emailLogs).values({
+      recipientEmail: params.to,
+      subject,
+      type: params.intent === 'negotiation' ? 'quote_negotiation' : 'quote_review',
+      rfqId: params.rfqId,
+      rfqInvitationId,
+      status: error ? 'failed' : 'sent',
+      externalId: data?.id,
+      errorMessage: error?.message,
+      bodyHtml: html,
+      attachments: [],
+    });
+
+    if (error) {
+      console.error('Failed to send quote-negotiation email:', error);
+      return { success: false, error: error.message };
+    }
+    console.log(
+      `✅ Quote-${params.intent} email sent to ${params.to} (round ${params.round})`
+    );
+    return { success: true, emailId: data?.id };
+  } catch (error) {
+    console.error('Error sending quote-negotiation email:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+export interface SendQuoteRevisedParams {
+  /** the buyer's email */
+  to: string;
+  buyerName: string;
+  supplierName: string;
+  rfqTitle: string;
+  rfqId: string;
+  /** link to the comparison / quote-detail page */
+  reviewLink: string;
+  round: number;
+}
+
+/** Notify the buyer that a supplier resubmitted after a review / negotiation round. */
+export async function sendQuoteRevisedEmail(
+  params: SendQuoteRevisedParams,
+  rfqInvitationId?: string
+) {
+  try {
+    const subject = `Revised quotation from ${params.supplierName} — ${params.rfqTitle}`;
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #10b981; color: white; padding: 18px; text-align: center; }
+          .content { background: #f9fafb; padding: 28px; }
+          .button { display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 5px; margin: 18px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header"><h2 style="margin:0;">Revised quotation received</h2></div>
+          <div class="content">
+            <p>Hi ${escapeHtml(params.buyerName)},</p>
+            <p><strong>${escapeHtml(params.supplierName)}</strong> has submitted a
+              revised quotation for <strong>${escapeHtml(params.rfqTitle)}</strong>
+              (round ${params.round}). Their earlier comments have been marked
+              addressed. The quotation is locked again.</p>
+            <p style="text-align:center;">
+              <a href="${params.reviewLink}" class="button">Review the revised quotation</a>
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: params.to,
+      subject,
+      html,
+    });
+
+    await db.insert(emailLogs).values({
+      recipientEmail: params.to,
+      subject,
+      type: 'quote_revised',
+      rfqId: params.rfqId,
+      rfqInvitationId,
+      status: error ? 'failed' : 'sent',
+      externalId: data?.id,
+      errorMessage: error?.message,
+      bodyHtml: html,
+      attachments: [],
+    });
+
+    if (error) {
+      console.error('Failed to send quote-revised email:', error);
+      return { success: false, error: error.message };
+    }
+    return { success: true, emailId: data?.id };
+  } catch (error) {
+    console.error('Error sending quote-revised email:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
 /**
  * A bare "Re:" reply with no template — used for the "we couldn't match your
  * email" / "sender mismatch" guidance messages. Logged so it shows in the
