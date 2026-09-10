@@ -1,6 +1,7 @@
 // The canonical structured RFQ document. Both the PDF renderer and the
-// single-column form builder render this shape, and every "update" from the
-// create-RFQ chat regenerates it. See MASTER_SPEC.md §2 step 1 + Appendix A.
+// read-only RFQ preview render this shape, and every "update" / natural-language
+// edit from the create-RFQ chat regenerates it. See MASTER_SPEC.md §2 step 1 +
+// Appendix A.
 
 export interface RFQHeader {
   buyer: string;
@@ -62,9 +63,11 @@ function rid(prefix: string): string {
  * src/lib/line-response.ts and are NOT listed here.
  */
 export function defaultCommercialFields(): CommercialField[] {
+  // Nothing is mandatory by default — a field is only made required when the
+  // buyer explicitly asks for it (via the create-RFQ chat).
   return [
-    { id: rid('cf'), label: 'Applicable taxes (GST %)', type: 'text', required: true },
-    { id: rid('cf'), label: 'Freight / transport charges', type: 'text', required: true },
+    { id: rid('cf'), label: 'Applicable taxes (GST %)', type: 'text', required: false },
+    { id: rid('cf'), label: 'Freight / transport charges', type: 'text', required: false },
     { id: rid('cf'), label: 'Payment terms offered', type: 'text', required: false },
     { id: rid('cf'), label: 'Volume / rebate discount', type: 'text', required: false },
     { id: rid('cf'), label: 'One-time tooling / setup charges', type: 'text', required: false },
@@ -73,7 +76,7 @@ export function defaultCommercialFields(): CommercialField[] {
 }
 
 /** Human-readable list of what the fixed per-line response captures — used by
- *  the PDF's "Commercial information requested" section and the form builder. */
+ *  the PDF's "Commercial information requested" section and the RFQ preview. */
 export const PER_LINE_RESPONSE_ITEMS: string[] = [
   'Whether you can supply the item (in full, partially, or not at all)',
   'Unit price',
@@ -245,6 +248,59 @@ export function rfqDocumentToText(doc: RFQDocument): string {
     doc.termsAndConditions.forEach((t) => parts.push(`  - ${t}`));
   }
   return parts.join('\n');
+}
+
+/**
+ * The ids of fields/questions/line items that differ between two documents —
+ * newly added, or with a changed label / type / required flag / options / core
+ * line-item values. Used to briefly highlight what an AI edit touched in the
+ * RFQ preview.
+ */
+export function diffFieldIds(prev: RFQDocument, next: RFQDocument): string[] {
+  const changed = new Set<string>();
+
+  const cfBefore = new Map(prev.commercialFields.map((f) => [f.id, f]));
+  for (const f of next.commercialFields) {
+    const b = cfBefore.get(f.id);
+    if (
+      !b ||
+      b.label !== f.label ||
+      b.type !== f.type ||
+      b.required !== f.required ||
+      (b.options ?? []).join('|') !== (f.options ?? []).join('|')
+    ) {
+      changed.add(f.id);
+    }
+  }
+
+  const qBefore = new Map(prev.questionnaire.map((q) => [q.id, q]));
+  for (const q of next.questionnaire) {
+    const b = qBefore.get(q.id);
+    if (
+      !b ||
+      b.question !== q.question ||
+      b.responseType !== q.responseType ||
+      b.required !== q.required
+    ) {
+      changed.add(q.id);
+    }
+  }
+
+  const liBefore = new Map(prev.lineItems.map((li) => [li.id, li]));
+  for (const li of next.lineItems) {
+    const b = liBefore.get(li.id);
+    if (
+      !b ||
+      b.item !== li.item ||
+      b.specification !== li.specification ||
+      b.quantity !== li.quantity ||
+      b.unit !== li.unit
+    ) {
+      changed.add(li.id);
+    }
+  }
+
+  return [...changed];
 }
 
 /** Short description for RFQ list / email teaser. */

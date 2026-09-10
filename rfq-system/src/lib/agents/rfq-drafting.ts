@@ -114,11 +114,11 @@ Return ONLY a JSON object with this exact shape:
     { "item": "Carton Box A", "specification": "5-ply, 12x10x8 in", "quantity": 10000, "unit": "pcs" }
   ],
   "commercialFields": [
-    { "label": "Applicable taxes (GST %)", "type": "text", "required": true },
-    { "label": "Freight / transport charges", "type": "text", "required": true }
+    { "label": "Applicable taxes (GST %)", "type": "text", "required": false },
+    { "label": "Freight / transport charges", "type": "text", "required": false }
   ],
   "questionnaire": [
-    { "question": "Do you have ISO 9001 certification?", "responseType": "yesno", "required": true }
+    { "question": "Do you have ISO 9001 certification?", "responseType": "yesno", "required": false }
   ],
   "supportingDocsNote": "Upload certificates / relevant documents.",
   "termsAndConditions": ["Delivery location", "Payment terms", "..."]
@@ -136,6 +136,10 @@ Rules:
   non-empty "label"; for type "select", include an "options" array.
 - questionnaire: quality / capability questions. Every entry MUST have a
   non-empty "question". responseType is "yesno", "text", or "file".
+- required / mandatory: set "required" to true ONLY when the buyer explicitly
+  said that field or question must be provided / is mandatory. If the buyer did
+  not say so, set "required": false — never mark fields mandatory on your own
+  judgement. This applies to both commercialFields and questionnaire.
 - termsAndConditions: a list of short strings.
 - Do not invent facts the thread doesn't support; leave a header field as ""
   if unknown.
