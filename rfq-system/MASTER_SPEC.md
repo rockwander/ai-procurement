@@ -119,8 +119,12 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
      implies; if the feedback isn't actionable it replies without changing the
      document.
    - **The AI never marks a field mandatory on its own.** On generation /
-     regeneration, every commercial field and questionnaire question is
-     optional unless the buyer explicitly asked for it to be required.
+     regeneration the Drafting Agent output is forced to `required: false` on
+     **every** commercial field and questionnaire question — a deterministic
+     guard in the agent, not just a prompt rule. A field becomes required only
+     when the buyer asks for it by name, which goes through the Edit Agent. The
+     default AI RFQ therefore has zero mandatory questionnaire / commercial
+     fields; a supplier can submit answering only the pricing grid.
 
    **Persistence.** A draft RFQ row is created as soon as the buyer starts
    the chat. The full chat thread (messages + attached-document text +
@@ -317,6 +321,21 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
+
+### 2026-09-11 — Drafting AI: force every questionnaire / commercial field optional
+
+**Refinement:** The default AI-generated RFQ was still coming back with several
+mandatory questionnaire questions and commercial fields despite the "AI never
+marks mandatory" rule being in the prompt. Make it deterministic: after the
+Drafting Agent returns, `draftRFQ` overwrites `required` to `false` on **every**
+commercial field and questionnaire item — the model's flags are ignored
+entirely. The prompt was also tightened ("ALWAYS set required: false", don't
+phrase questions as mandatory). Buyer-driven "make X required" still works — it
+goes through the Edit Agent, which is untouched. Net effect: a fresh AI RFQ has
+no mandatory questionnaire / commercial fields; only the fixed pricing grid
+blocks a supplier submission.
+
+**Affects:** §2 step 1, §4 (AI Agents — Drafting), workflow step 1.
 
 ### 2026-09-11 — Review / negotiate a submitted quotation
 

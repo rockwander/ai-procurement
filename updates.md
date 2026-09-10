@@ -21,6 +21,17 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-11 — Drafting AI: force every questionnaire / commercial field optional
+**Refinement:** The default AI RFQ still had mandatory questionnaire questions
+and commercial fields despite the prompt rule. Made it deterministic — after
+the Drafting Agent returns, `draftRFQ` overwrites `required: false` on every
+commercial field and questionnaire item; the model's flags are ignored. Prompt
+also tightened. Buyer-driven "make X required" is unaffected (Edit Agent path).
+A fresh AI RFQ now has zero mandatory questionnaire / commercial fields — only
+the fixed pricing grid blocks a supplier submission.
+**Affects:** MASTER_SPEC §2 step 1, §4 (AI Agents — Drafting).
+**Status:** implemented
+
 ## 2026-09-11 — Review / negotiate a submitted quotation
 **Refinement:** From Compare quotes, the buyer expands a supplier to view their
 full submitted quotation on a dedicated page, clicks any response value to

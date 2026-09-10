@@ -54,6 +54,20 @@ export class RFQDraftingAgent extends BaseAgent {
         buyer: input.buyerName,
       });
 
+      // Deterministic guard: the drafting agent NEVER marks a commercial field
+      // or a questionnaire question mandatory, whatever the model returned. The
+      // buyer makes something required later, explicitly, via a chat edit
+      // (RFQEditAgent) — that path is not affected. See
+      // REQUIREMENT / MASTER_SPEC 2026-09-10 + 2026-09-11.
+      data.commercialFields = data.commercialFields.map((f) => ({
+        ...f,
+        required: false,
+      }));
+      data.questionnaire = data.questionnaire.map((q) => ({
+        ...q,
+        required: false,
+      }));
+
       const costUsd = this.calculateCost(tokensUsed);
 
       await this.logExecution({
@@ -136,10 +150,13 @@ Rules:
   non-empty "label"; for type "select", include an "options" array.
 - questionnaire: quality / capability questions. Every entry MUST have a
   non-empty "question". responseType is "yesno", "text", or "file".
-- required / mandatory: set "required" to true ONLY when the buyer explicitly
-  said that field or question must be provided / is mandatory. If the buyer did
-  not say so, set "required": false — never mark fields mandatory on your own
-  judgement. This applies to both commercialFields and questionnaire.
+- required / mandatory: ALWAYS set "required": false on every commercialFields
+  entry and every questionnaire entry. You do not decide what is mandatory —
+  the buyer makes specific fields required afterwards, by asking. Never infer
+  it, never mark something required because it "seems important". A supplier
+  should be able to submit a quote that answers only the pricing grid. Do not
+  phrase questions as "you must…" / "mandatory" either — keep them as plain
+  requests for information.
 - termsAndConditions: a list of short strings.
 - Do not invent facts the thread doesn't support; leave a header field as ""
   if unknown.
