@@ -5,7 +5,7 @@ import { eq, asc } from 'drizzle-orm';
 import { badRequest, notFound, serverError } from '@/lib/api';
 import { loadQuoteContext } from '@/lib/quote-access';
 import { AutofillAgent, type AutofillLineItem } from '@/lib/agents/autofill';
-import { applyAgentPatches } from '@/lib/line-response-status';
+import { applyAgentPatches, inferNoBidForUncoveredLines } from '@/lib/line-response-status';
 import type { FormSchema } from '@/lib/form-schema';
 import { normalizeRFQDocument } from '@/lib/rfq-document';
 import type { RFQLineForResponse } from '@/lib/line-response';
@@ -145,31 +145,56 @@ export async function POST(
 
     const applied = applyAgentPatches(patches, formSchema.fields ?? []);
 
+    const lines: RFQLineForResponse[] = ctx.lineItems.map((li) => ({
+      id: li.id,
+      itemDescription: li.itemDescription,
+      quantity: li.quantity,
+      unit: li.unit,
+    }));
+    const seeded = seedDraftState(lines, rfqCurrency, ctx.draft);
+
+    // How many lines the agent actually quoted, before we infer no-bids.
+    const nLinesQuoted = Object.keys(applied.linePatches).length;
+
+    // A document upload that quotes only some lines means the others are not
+    // being offered — mark them so, rather than demanding a price. Only on the
+    // document path, and not when the supplier is clarifying one field.
+    let nLinesNotOffered = 0;
+    if (hasDocs && !activeField) {
+      const before = new Set(Object.keys(applied.linePatches));
+      inferNoBidForUncoveredLines(lines, applied, {
+        responses: seeded.lineResponses,
+        provenance: seeded.provenance,
+      });
+      nLinesNotOffered = Object.keys(applied.linePatches).filter(
+        (id) => !before.has(id)
+      ).length;
+    }
+
     // Keep the server-side draft current so the quote survives a reload and
     // email → link → chat round-trips (REQUIREMENT_quote-via-email.md §6).
     if (
       Object.keys(applied.linePatches).length ||
       Object.keys(applied.formPatches).length
     ) {
-      const lines: RFQLineForResponse[] = ctx.lineItems.map((li) => ({
-        id: li.id,
-        itemDescription: li.itemDescription,
-        quantity: li.quantity,
-        unit: li.unit,
-      }));
-      const seeded = seedDraftState(lines, rfqCurrency, ctx.draft);
       const merged = mergePatchesIntoDraft(seeded, applied);
       await saveDraft(ctx.invitation.id, merged, 'link');
     }
 
     // Compose a short summary when the doc path ran.
     if (hasDocs && !assistantMessage) {
-      const nLine = Object.keys(applied.linePatches).length;
       const nForm = Object.keys(applied.formPatches).length;
       const parts = [
-        `Read ${documentTexts!.length} document(s): updated ${nLine} line item(s)` +
+        `Read ${documentTexts!.length} document(s): quoted ${nLinesQuoted} line item(s)` +
           (nForm ? ` and ${nForm} quote-level field(s)` : '') + '.',
       ];
+      if (nLinesNotOffered) {
+        parts.push(
+          `Your document didn't cover ${nLinesNotOffered} other line(s) — I've marked ` +
+            `them "not offered". Change any you can actually supply, or confirm them ` +
+            `as-is, before you submit.`
+        );
+      }
       if (missingFields.length) {
         parts.push(`Still needs your input: ${missingFields.join('; ')}.`);
       }

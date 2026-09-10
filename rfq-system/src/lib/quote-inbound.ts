@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm';
 import { loadQuoteContext } from '@/lib/quote-access';
 import { normalizeRFQDocument } from '@/lib/rfq-document';
 import { AutofillAgent, type AutofillLineItem } from '@/lib/agents/autofill';
-import { applyAgentPatches } from '@/lib/line-response-status';
+import { applyAgentPatches, inferNoBidForUncoveredLines } from '@/lib/line-response-status';
 import type { FormSchema } from '@/lib/form-schema';
 import { committedQty, type RFQLineForResponse } from '@/lib/line-response';
 import { parseInboundEmail, type InboundEmailPayload } from '@/lib/inbound-email';
@@ -138,6 +138,18 @@ export async function processInboundEmail(
 
   // ---- Merge into the draft -----------------------------------------
   const seeded = seedDraftState(lines, rfqCurrency, ctx.draft);
+
+  // Lines the emailed document didn't cover are "not offered" — mark them so
+  // (as a to-confirm blocker) rather than demanding a price the supplier never
+  // gave. This keeps the quote unblocked on the price fields but stops an
+  // auto-submit: the ack email will carry the link to confirm.
+  if (parsed.documentTexts.length) {
+    inferNoBidForUncoveredLines(lines, applied, {
+      responses: seeded.lineResponses,
+      provenance: seeded.provenance,
+    });
+  }
+
   const merged = mergePatchesIntoDraft(seeded, applied);
 
   // ---- Record the email as chat turns -----------------------------

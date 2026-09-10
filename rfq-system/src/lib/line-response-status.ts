@@ -93,6 +93,13 @@ export interface FieldProvenance {
   confirmedBySupplier?: boolean;
   /** true when the value equals the system default and nothing corroborated it */
   isDefault?: boolean;
+  /**
+   * Set on a `line:<id>:canSupply` entry when the system marked the line
+   * `canSupply: 'no'` because the supplier's uploaded document said nothing
+   * about it. The supplier must confirm (or correct) it before submitting —
+   * it counts as a blocker and, on the email path, stops an auto-submit.
+   */
+  inferredNoBid?: boolean;
 }
 
 export type ProvenanceMap = Record<string, FieldProvenance>;
@@ -112,6 +119,8 @@ export function fieldState(
   if (!hasValue(value)) return meta.blocking ? 'empty' : 'optional-empty';
 
   if (prov?.confirmedBySupplier) return 'confident';
+  // A system-inferred "not offered" the supplier hasn't confirmed reads amber.
+  if (prov?.inferredNoBid) return 'uncertain';
   if (prov?.isDefault) return 'assumed';
   const c = prov?.extractionConfidence;
   if (c === 'medium' || c === 'low') return 'uncertain';
@@ -140,6 +149,8 @@ export interface AttentionList {
 /**
  * Every mandatory field that currently has no value:
  *  - per line: blocking fields, minus any line where canSupply === 'no'
+ *  - a line the system auto-marked `canSupply: 'no'` (because the uploaded
+ *    document didn't mention it) that the supplier hasn't confirmed yet
  *  - quote-level commercial fields the buyer marked required
  *  - questionnaire items the buyer marked required
  */
@@ -147,15 +158,28 @@ export function missingMandatory(
   lines: RFQLineForResponse[],
   responses: Record<string, LineItemResponse | undefined>,
   formSchema: FormSchema | null,
-  formData: Record<string, unknown>
+  formData: Record<string, unknown>,
+  provenance?: ProvenanceMap
 ): AttentionList {
   const items: AttentionItem[] = [];
 
   lines.forEach((line, i) => {
     const r = responses[line.id];
     // canSupply always has a value (defaults to 'full'); if it's 'no', the
-    // rest of the line's blocking fields no longer apply.
-    if (r?.canSupply === 'no') return;
+    // rest of the line's blocking fields no longer apply — but if the system
+    // *inferred* the 'no' from a silent document, the supplier still has to
+    // confirm it.
+    if (r?.canSupply === 'no') {
+      const csProv = provenance?.[lineFieldId(line.id, 'canSupply')];
+      if (csProv?.inferredNoBid && !csProv.confirmedBySupplier) {
+        items.push({
+          id: lineFieldId(line.id, 'canSupply'),
+          group: 'line-items',
+          label: `Line ${i + 1} — confirm you're not quoting this`,
+        });
+      }
+      return;
+    }
 
     for (const field of LINE_FIELDS) {
       const meta = LINE_FIELD_META[field];
@@ -334,6 +358,62 @@ export function applyAgentPatches(
   }
 
   return out;
+}
+
+/**
+ * After the Autofill agent has run over the supplier's uploaded document(s),
+ * any RFQ line it produced NO patch for is one the document didn't cover.
+ * Treat those as "not offered": mark `canSupply: 'no'` with an
+ * `inferredNoBid` provenance flag so the preview strikes them through, the
+ * blocking price fields stop being demanded, and the supplier is prompted to
+ * confirm (blocker) — or correct it if they can actually supply the line.
+ *
+ * `current` is the draft state the patches are about to merge into. A line is
+ * only converted when it's genuinely untouched there — no price, `canSupply`
+ * still the default `'full'`, and the supplier hasn't confirmed it — so a
+ * second upload or a manual edit is never clobbered.
+ *
+ * No-ops unless the agent covered at least one line — a document that mapped
+ * onto nothing shouldn't blank the whole quote.
+ */
+export function inferNoBidForUncoveredLines(
+  lines: RFQLineForResponse[],
+  applied: AppliedPatches,
+  current: {
+    responses: Record<string, LineItemResponse | undefined>;
+    provenance: ProvenanceMap;
+  }
+): AppliedPatches {
+  const coveredLineIds = new Set(Object.keys(applied.linePatches));
+  if (coveredLineIds.size === 0) return applied;
+
+  for (const line of lines) {
+    if (coveredLineIds.has(line.id)) continue;
+    const csId = lineFieldId(line.id, 'canSupply');
+
+    const r = current.responses[line.id];
+    const csProv = current.provenance[csId];
+    const untouched =
+      (!r || (r.canSupply === 'full' && r.unitPrice == null)) &&
+      !csProv?.confirmedBySupplier;
+    // Re-affirm an existing inferred no-bid (keep it a blocker) but don't
+    // disturb a line the supplier has actually worked on.
+    if (!untouched && !csProv?.inferredNoBid) continue;
+
+    applied.linePatches[line.id] = {
+      ...applied.linePatches[line.id],
+      canSupply: 'no',
+    };
+    applied.provenance[csId] = {
+      extractionConfidence: 'low',
+      inferredNoBid: true,
+      rationale:
+        "Your document didn't mention this line, so it's marked as not offered. " +
+        'Change it if you can supply this item.',
+    };
+  }
+
+  return applied;
 }
 
 /** committed vs asked, for the preview's partial badge. */

@@ -78,9 +78,24 @@ function collectLowConfidence(
   lines.forEach((line, i) => {
     const r = responses[line.id];
     if (!r) return;
+
+    // A line the system marked "not offered" because the email didn't mention
+    // it — the supplier should confirm that before it's frozen in.
+    const csProv = provenance[`line:${line.id}:canSupply`];
+    if (r.canSupply === 'no' && csProv?.inferredNoBid && !csProv.confirmedBySupplier) {
+      out.push({
+        id: `line:${line.id}:canSupply`,
+        label: `Line ${i + 1} — not offered`,
+        value: 'not offered',
+        rationale:
+          csProv.rationale || "your email didn't mention this line — confirm you're not quoting it",
+        kind: 'uncertain',
+      });
+    }
+
     for (const field of LINE_FIELDS) {
       const meta = LINE_FIELD_META[field];
-      if (field === 'canSupply') continue; // always has a value, never amber-worth-flagging
+      if (field === 'canSupply') continue; // handled above
       const value = r[field] as unknown;
       const prov = provenance[`line:${line.id}:${field}`];
       const state = fieldState(value, meta, prov, {
@@ -135,6 +150,9 @@ export function assessQuoteAck(input: {
   formData: Record<string, unknown>;
   provenance: ProvenanceMap;
 }): QuoteAckAssessment {
+  // Note: provenance is deliberately NOT passed here. An inferred "not offered"
+  // line surfaces in the email's "Please verify" section (via collectLowConfidence
+  // below), not in "Still needed" — one mention, framed as a confirmation.
   const blockers = missingMandatory(
     input.lines,
     input.responses,

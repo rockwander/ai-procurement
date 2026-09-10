@@ -175,7 +175,13 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
   runs each turn and fills the **fixed per-line table**
   (attachments may be PDF, Word, CSV, text, or an **image** — photo / scan /
   screenshot of a quote or price list — transcribed to text via Gemini vision;
-  the binary is never stored) (§2 — `canSupply`,
+  the binary is never stored)
+  - **Lines the document didn't cover become "not offered".** If an uploaded
+    document quotes only some line items, the rest are marked `canSupply: 'no'`
+    (struck through in the preview, no price demanded) with a "confirm you're
+    not quoting this" prompt — a blocker in-app, and on the email path a
+    verify item that stops an auto-submit and sends the link instead. The
+    supplier confirms in the preview's Supply cell or via the assistant. (§2 — `canSupply`,
   `unitPrice`, `currency`, `quotedUom`, `availableQty`, `leadTimeDays`, `moq`)
   plus the buyer-defined quote-level fields and questionnaire. The preview is a
   **templated rendering of that table** — each field a tagged element — not a
@@ -281,6 +287,28 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
+
+### 2026-09-10 — A partial quotation means "not offered" on the other lines
+
+**Refinement:** When a supplier uploads a document that quotes only some line
+items, the system must treat the uncovered lines as *not offered* — not leave
+them as mandatory "provide a unit price" blockers.
+
+- After the Autofill Agent runs over the document(s),
+  `inferNoBidForUncoveredLines()` marks every line the agent produced no value
+  for as `canSupply: 'no'` with an `inferredNoBid` provenance flag. It only
+  touches lines still at the untouched default (`full`, no price, unconfirmed),
+  and no-ops if the agent matched nothing.
+- Preview: the line is struck through, shows "not offered ⓘ confirm"; its
+  price / UoM fields no longer count as missing-mandatory.
+- The inferred no-bid **is** a to-confirm item: a blocker in the in-app
+  "needs attention" panel (`missingMandatory` now takes provenance), and an
+  `uncertain` "please verify" item on the email path (`collectLowConfidence`),
+  so an emailed partial quote gets the ack email + link, never an auto-submit.
+- The supplier clears it by opening the Supply cell (any choice, including
+  leaving it "not offered") or telling the assistant they can supply the line.
+
+**Affects:** §3 (Supplier Flow), `REQUIREMENT_quote-via-email.md` §4.
 
 ### 2026-09-10 — Chat attachments accept images (supplier quote assistant + create-RFQ)
 

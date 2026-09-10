@@ -134,9 +134,10 @@ export default function SupplierQuotePage() {
       data.lineItems as RFQLineForResponse[],
       value.lineResponses,
       schema,
-      value.formData
+      value.formData,
+      provenance
     );
-  }, [data, schema, value]);
+  }, [data, schema, value, provenance]);
 
   // Persist the in-progress quote server-side (debounced) so a reload — or an
   // email → link → email round-trip — doesn't lose work. Skipped once locked.

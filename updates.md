@@ -21,6 +21,17 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-10 — A partial quotation means "not offered" on the other lines
+**Refinement:** When a supplier uploads a document quoting only some line items,
+the uncovered lines are marked "not offered" (`canSupply: 'no'`, struck through,
+no price demanded) instead of staying as mandatory unit-price blockers. The
+inferred no-bid is a to-confirm item — a blocker in the in-app attention panel
+and an `uncertain` "please verify" item on the email path, so an emailed partial
+quote gets the ack email + link rather than auto-submitting. The supplier clears
+it in the preview's Supply cell or via the assistant.
+**Affects:** MASTER_SPEC §3 (Supplier Flow), REQUIREMENT_quote-via-email.md §4.
+**Status:** implemented
+
 ## 2026-09-10 — Chat attachments accept images (supplier quote assistant + create-RFQ)
 **Refinement:** Both AI chats that take document attachments — the supplier
 quote assistant (`/quote/[token]`) and the create-RFQ conversation — now

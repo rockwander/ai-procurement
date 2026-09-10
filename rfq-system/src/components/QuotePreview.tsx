@@ -780,7 +780,12 @@ function SupplyCell(
           p.onConfirmField(targetId);
           setOpen(false);
         }}
-        onBlur={() => setOpen(false)}
+        onBlur={() => {
+          // Opening the dropdown and closing it (even on the same value) counts
+          // as confirming a system-inferred "not offered".
+          p.onConfirmField(targetId);
+          setOpen(false);
+        }}
         className="bg-white border-b border-blue-400 outline-none text-[13px]"
       >
         <option value="full">can supply in full</option>
@@ -790,8 +795,16 @@ function SupplyCell(
     );
   }
 
+  const csProv = p.provenance[targetId];
+  const inferredNoBid = !!csProv?.inferredNoBid && !csProv?.confirmedBySupplier;
+
   let label: React.ReactNode;
-  if (r.canSupply === 'no') label = <span className="italic">not offered</span>;
+  if (r.canSupply === 'no')
+    label = (
+      <span className={inferredNoBid ? 'italic text-amber-800 bg-amber-100/60 rounded px-0.5' : 'italic'}>
+        not offered
+      </span>
+    );
   else if (p.cov.partial)
     label = (
       <span className="text-amber-800">
@@ -813,6 +826,14 @@ function SupplyCell(
       }`}
     >
       {label}
+      {inferredNoBid && (
+        <span
+          className="ml-1 align-middle text-amber-600 text-[11px] font-sans cursor-help"
+          title={csProv?.rationale || "You didn't quote this line — confirm or correct it."}
+        >
+          ⓘ confirm
+        </span>
+      )}
     </span>
   );
 }

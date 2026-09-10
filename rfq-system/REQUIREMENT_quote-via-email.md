@@ -120,6 +120,29 @@ verify" section for the supplier's awareness. Only a genuine AI extraction at
 medium/low confidence (`uncertain`) blocks — that could be wrong, and one-shot
 submission would freeze it in.
 
+### Lines the document didn't cover → "not offered", to confirm
+
+When the supplier's document / email quotes only some line items, the ones the
+Autofill Agent produced no value for are **not** left demanding a price. After
+`applyAgentPatches`, `inferNoBidForUncoveredLines(...)` sets `canSupply: 'no'`
+on every uncovered line (only where the line is still untouched — default
+`full`, no price, not supplier-confirmed) with an `inferredNoBid` provenance
+flag. Effect:
+
+- the preview strikes the line through and shows "not offered ⓘ confirm";
+- its blocking price / UoM fields stop counting as missing-mandatory;
+- the line **does** count as a blocker (`missingMandatory`, in-app) / an
+  `uncertain` verify item (`collectLowConfidence`, email) until the supplier
+  confirms it — so an emailed quote with uncovered lines gets the ack email
+  with the link, never an auto-submit;
+- the supplier confirms by opening the "Supply" cell in the preview (any
+  selection, including leaving it "not offered", clears the flag) or by
+  telling the assistant they can supply the line.
+
+Product-owner decision, 2026-09-10.
+
+---
+
 Without this carve-out, an emailed quote would essentially never auto-submit:
 a supplier quoting in the RFQ's own currency and the asked unit never states
 either explicitly, so both stay `assumed` forever.
