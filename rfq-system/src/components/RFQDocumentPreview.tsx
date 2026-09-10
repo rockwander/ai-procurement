@@ -6,22 +6,36 @@ import {
   PER_LINE_RESPONSE_ITEMS,
 } from '@/lib/rfq-document';
 
+export interface PreviewScope {
+  /** stable id — a field/question/line id, or `section:<slug>` / `term:<i>` */
+  id: string;
+  /** human label shown in the chat's "re: …" chip */
+  label: string;
+  /** the passage text the buyer is commenting on */
+  text: string;
+}
+
 /**
  * Read-only rendering of the canonical RFQ document as a *document* — the buyer's
  * counterpart to the supplier's quotation preview (QuotePreview.tsx). It reads
  * like the RFQ a supplier will receive; there are no input controls.
  *
- * All changes to the form definition (rename a field, make it required, change a
- * type, add / remove / reorder) are made by talking to the assistant in the
- * create-RFQ conversation. Each field / question / line carries a
- * `data-field="<id>"` so an applied edit can scroll to and briefly highlight it.
+ * Any heading, field, question or term is **clickable**: clicking it rings the
+ * passage and scopes the create-RFQ chat to it ("re: …"), so the buyer's next
+ * message is feedback about that passage. The assistant applies a change if the
+ * feedback implies one. Applied edits briefly highlight the affected rows
+ * (`changedFieldIds`) via the same `data-field` hooks.
  */
 export function RFQDocumentPreview({
   doc,
   changedFieldIds = [],
+  activeScopeId,
+  onScope,
 }: {
   doc: RFQDocument;
   changedFieldIds?: string[];
+  activeScopeId?: string | null;
+  onScope?: (scope: PreviewScope) => void;
 }) {
   const changed = new Set(changedFieldIds);
   const h = doc.header;
@@ -35,12 +49,14 @@ export function RFQDocumentPreview({
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [changedFieldIds]);
 
+  const p = { activeScopeId, onScope };
+
   return (
     <div className="rfq-doc font-serif text-[15px] leading-relaxed text-gray-800">
       <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 font-sans text-[13px] text-blue-900">
-        This is a preview of the RFQ. To change it — rename a field, make one
-        required, change a type, add or remove a field or question — just ask in
-        the chat.
+        This is a preview of the RFQ. Click any heading, field, question or term
+        to comment on it in the chat — or just type a change (rename a field,
+        make one required, change a type, add or remove a field).
       </div>
 
       {/* Letterhead */}
@@ -59,7 +75,16 @@ export function RFQDocumentPreview({
       </div>
 
       {/* 1. Line items */}
-      <SectionHeading>1. Line items</SectionHeading>
+      <Passage
+        {...p}
+        id="section:line-items"
+        label="Line items (section)"
+        text="Section 1 — Line items: the items the supplier must quote."
+        as="h3"
+        className="font-sans font-semibold text-gray-900 mt-6 mb-2"
+      >
+        1. Line items
+      </Passage>
       {doc.lineItems.length === 0 ? (
         <p className="text-gray-400 mb-4">No line items.</p>
       ) : (
@@ -76,17 +101,20 @@ export function RFQDocumentPreview({
             </thead>
             <tbody>
               {doc.lineItems.map((li) => (
-                <tr
+                <PassageRow
+                  {...p}
                   key={li.id}
-                  data-field={li.id}
-                  className={`border-b border-gray-100 align-top ${hl(changed.has(li.id))}`}
+                  id={li.id}
+                  label={`Line ${li.line} — ${li.item || 'item'}`}
+                  text={`${li.line}. ${li.item} — ${li.specification || 'no spec'} — ${li.quantity} ${li.unit}`}
+                  highlighted={changed.has(li.id)}
                 >
                   <td className="py-2 pr-3 text-gray-400">{li.line}</td>
                   <td className="py-2 pr-3">{li.item || <Gap />}</td>
                   <td className="py-2 pr-3 text-gray-600">{li.specification || '—'}</td>
                   <td className="py-2 pr-3 text-right">{li.quantity.toLocaleString()}</td>
                   <td className="py-2">{li.unit}</td>
-                </tr>
+                </PassageRow>
               ))}
             </tbody>
           </table>
@@ -94,7 +122,16 @@ export function RFQDocumentPreview({
       )}
 
       {/* 2. Commercial information requested */}
-      <SectionHeading>2. Commercial information requested</SectionHeading>
+      <Passage
+        {...p}
+        id="section:commercial"
+        label="Commercial information (section)"
+        text="Section 2 — Commercial information requested: the fixed per-line response grid plus the quote-level commercial fields."
+        as="h3"
+        className="font-sans font-semibold text-gray-900 mt-6 mb-2"
+      >
+        2. Commercial information requested
+      </Passage>
       <p className="text-[13px] text-gray-500 mb-1 font-sans">
         For every line item, the supplier provides:
       </p>
@@ -110,10 +147,14 @@ export function RFQDocumentPreview({
           </p>
           <ul className="space-y-1.5 list-disc pl-5 mb-4">
             {doc.commercialFields.map((cf) => (
-              <li
+              <Passage
+                {...p}
                 key={cf.id}
-                data-field={cf.id}
-                className={`rounded ${hl(changed.has(cf.id))}`}
+                id={cf.id}
+                label={`Field: ${cf.label || 'unnamed'}`}
+                text={`Commercial field "${cf.label}" (${cf.type}${cf.required ? ', required' : ''}${cf.options?.length ? `; options: ${cf.options.join(', ')}` : ''})`}
+                as="li"
+                highlighted={changed.has(cf.id)}
               >
                 <span className="font-medium">{cf.label || <Gap />}</span>
                 <FieldMeta
@@ -121,23 +162,36 @@ export function RFQDocumentPreview({
                   required={cf.required}
                   options={cf.options}
                 />
-              </li>
+              </Passage>
             ))}
           </ul>
         </>
       )}
 
       {/* 3. Quality questionnaire */}
-      <SectionHeading>3. Quality questionnaire</SectionHeading>
+      <Passage
+        {...p}
+        id="section:questionnaire"
+        label="Quality questionnaire (section)"
+        text="Section 3 — Quality questionnaire: capability / quality questions the supplier answers once."
+        as="h3"
+        className="font-sans font-semibold text-gray-900 mt-6 mb-2"
+      >
+        3. Quality questionnaire
+      </Passage>
       {doc.questionnaire.length === 0 ? (
         <p className="text-gray-400 mb-3">No questions.</p>
       ) : (
         <dl className="space-y-2.5 mb-3">
           {doc.questionnaire.map((q) => (
-            <div
+            <Passage
+              {...p}
               key={q.id}
-              data-field={q.id}
-              className={`rounded ${hl(changed.has(q.id))}`}
+              id={q.id}
+              label={`Question: ${(q.question || 'unnamed').slice(0, 40)}`}
+              text={`Questionnaire question "${q.question}" (${q.responseType}${q.required ? ', required' : ''})`}
+              as="div"
+              highlighted={changed.has(q.id)}
             >
               <dt className="text-gray-800">
                 {q.question || <Gap />}
@@ -146,23 +200,48 @@ export function RFQDocumentPreview({
                   required={q.required}
                 />
               </dt>
-            </div>
+            </Passage>
           ))}
         </dl>
       )}
-      <p className="text-[13px] text-gray-500 font-sans mb-4">
+      <Passage
+        {...p}
+        id="section:supporting-docs"
+        label="Supporting documents note"
+        text={`Supporting documents ask: ${doc.supportingDocsNote || '(none)'}`}
+        as="p"
+        className="text-[13px] text-gray-500 font-sans mb-4"
+      >
         <span className="text-gray-400">Supporting documents: </span>
         {doc.supportingDocsNote || '—'}
-      </p>
+      </Passage>
 
       {/* 4. Terms & conditions */}
-      <SectionHeading>4. Terms &amp; conditions</SectionHeading>
+      <Passage
+        {...p}
+        id="section:terms"
+        label="Terms & conditions (section)"
+        text="Section 4 — Terms & conditions: the buyer's terms the supplier must accept or raise exceptions against."
+        as="h3"
+        className="font-sans font-semibold text-gray-900 mt-6 mb-2"
+      >
+        4. Terms &amp; conditions
+      </Passage>
       {doc.termsAndConditions.length === 0 ? (
         <p className="text-gray-400">No terms.</p>
       ) : (
         <ul className="list-disc pl-5 text-[14px] text-gray-700 space-y-0.5">
           {doc.termsAndConditions.map((t, i) => (
-            <li key={i}>{t}</li>
+            <Passage
+              {...p}
+              key={i}
+              id={`term:${i}`}
+              label={`Term: ${t.slice(0, 40)}`}
+              text={`Term / condition: ${t}`}
+              as="li"
+            >
+              {t}
+            </Passage>
           ))}
         </ul>
       )}
@@ -172,9 +251,84 @@ export function RFQDocumentPreview({
 
 // ---------------------------------------------------------------------------
 
-function SectionHeading({ children }: { children: ReactNode }) {
+type ScopeCtx = {
+  activeScopeId?: string | null;
+  onScope?: (scope: PreviewScope) => void;
+};
+
+/**
+ * A clickable passage in the RFQ preview. Clicking rings it and scopes the chat
+ * to it. Renders as the given tag; when it's a `<tr>` use `PassageRow` instead
+ * so the cells stay valid table markup.
+ */
+function Passage({
+  activeScopeId,
+  onScope,
+  id,
+  label,
+  text,
+  as: Tag = 'span',
+  className = '',
+  highlighted = false,
+  children,
+}: ScopeCtx & {
+  id: string;
+  label: string;
+  text: string;
+  as?: 'span' | 'p' | 'li' | 'div' | 'h3';
+  className?: string;
+  highlighted?: boolean;
+  children: ReactNode;
+}) {
+  const active = activeScopeId === id;
+  const clickable = !!onScope;
   return (
-    <h3 className="font-sans font-semibold text-gray-900 mt-6 mb-2">{children}</h3>
+    <Tag
+      data-field={id}
+      onClick={clickable ? () => onScope!({ id, label, text }) : undefined}
+      title={clickable ? 'Click to comment on this in the chat' : undefined}
+      className={`${className} rounded ${
+        clickable ? 'cursor-pointer hover:bg-blue-50/70' : ''
+      } ${active ? 'ring-2 ring-blue-300 bg-blue-50/70' : ''} ${
+        highlighted ? 'bg-amber-100 ring-1 ring-amber-300 transition-colors' : ''
+      }`}
+    >
+      {children}
+    </Tag>
+  );
+}
+
+/** Same as Passage but for a table row (children are <td> cells). */
+function PassageRow({
+  activeScopeId,
+  onScope,
+  id,
+  label,
+  text,
+  highlighted = false,
+  children,
+}: ScopeCtx & {
+  id: string;
+  label: string;
+  text: string;
+  highlighted?: boolean;
+  children: ReactNode;
+}) {
+  const active = activeScopeId === id;
+  const clickable = !!onScope;
+  return (
+    <tr
+      data-field={id}
+      onClick={clickable ? () => onScope!({ id, label, text }) : undefined}
+      title={clickable ? 'Click to comment on this in the chat' : undefined}
+      className={`border-b border-gray-100 align-top ${
+        clickable ? 'cursor-pointer hover:bg-blue-50/70' : ''
+      } ${active ? 'ring-2 ring-blue-300 bg-blue-50/70' : ''} ${
+        highlighted ? 'bg-amber-100' : ''
+      }`}
+    >
+      {children}
+    </tr>
   );
 }
 
@@ -209,9 +363,4 @@ function Gap() {
       &nbsp;
     </span>
   );
-}
-
-/** Brief highlight for a field an AI edit just changed. */
-function hl(on: boolean): string {
-  return on ? 'bg-amber-100 ring-1 ring-amber-300 transition-colors' : '';
 }

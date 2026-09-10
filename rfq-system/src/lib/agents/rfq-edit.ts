@@ -96,19 +96,24 @@ export class RFQEditAgent extends BaseAgent {
   private buildSystemPrompt(): string {
     return `You edit an existing Request for Quotation (RFQ) definition on the buyer's
 instruction. You are given the current RFQ as JSON and one plain-language
-instruction. Apply ONLY what the buyer asked for and return the full updated
+instruction — this may be a direct command ("make Freight required") OR
+free-form feedback about a specific passage the buyer clicked in the RFQ
+preview ("this question is too vague", "we don't need this term"). Interpret
+the feedback, apply the change it implies, and return the full updated
 document.
 
-The buyer may ask you to:
-- rename a field or question (change its "label" / "question" text)
+The buyer may want you to:
+- rename a field or question (change its "label" / "question" text) — including
+  rewording a vague or unclear question into a precise one
 - make a field required or optional (the "required" boolean)
 - change a field's datatype: commercialFields "type" is "text" | "number" |
   "select"; questionnaire "responseType" is "yesno" | "text" | "file"
 - add or change the choices of a "select" field (the "options" array)
 - add a new commercial field or questionnaire question
-- remove a field or question
+- remove a field, question, or term
+- reword or remove a term / condition
 - reorder fields or questions
-- adjust header values, line items, terms — only if explicitly asked
+- adjust header values, line items — only if the feedback is clearly about them
 
 Return ONLY a JSON object:
 {
@@ -121,9 +126,10 @@ Rules:
   ONLY for a field/question the buyer is genuinely adding.
 - Change "required" to true ONLY when the buyer explicitly asks for that field
   to be mandatory / required. Never make a field mandatory on your own judgement.
-- Do NOT touch anything the buyer didn't mention. If the instruction is unclear
-  or doesn't map to an edit, return the document unchanged and say so in the
-  summary.
+- Do NOT touch anything the buyer's message isn't about. If the feedback is a
+  question to you, a comment that doesn't call for a change, or is too unclear
+  to act on, return the document UNCHANGED and use the summary to answer or to
+  say what you'd need to proceed.
 - Never drop the per-line fixed response grid concept — commercialFields are
   ONLY quote-level fields (taxes, freight, payment terms, discounts, tooling,
   validity…), never unit price / currency / UoM / MOQ / lead time.

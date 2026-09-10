@@ -36,17 +36,22 @@ Entry format:
    re-derived), and the changed rows briefly highlight in the preview. The
    **outline → confirm → apply** flow for structural (re)generation is unchanged
    — natural-language edits are a refinement layer on the already-applied RFQ.
+   In the preview, **any heading, field, question or term is clickable** — it
+   rings the passage and scopes the chat to it ("re: …"), so the buyer's next
+   message is feedback about that passage. The agent applies a change if the
+   feedback implies one (e.g. rewording a vague question, dropping a term);
+   otherwise it replies without touching the document.
 
 2. **The drafting AI must not mark any field mandatory on its own.** Generated /
    regenerated RFQs have every commercial field and questionnaire question
    optional unless the buyer explicitly asked for it to be required.
 
 **Affects:** MASTER_SPEC §2 step 1 (Create RFQ — the form-builder view becomes a
-read-only preview; edits go through the chat); Drafting Agent; new
-`RFQEditAgent`; `POST /api/rfqs/[id]/draft-chat` (`action: 'edit'`);
-`RFQDocumentPreview` replaces `RFQDocumentBuilder`. Supersedes the UI parts of
-the two 2026-09-07 form-builder entries (the RFQ document model + PDF are
-unchanged).
+read-only preview; edits and passage-scoped feedback go through the chat);
+Drafting Agent; new `RFQEditAgent`; `POST /api/rfqs/[id]/draft-chat`
+(`action: 'edit'`, optional `scope`); `RFQDocumentPreview` replaces
+`RFQDocumentBuilder`. Supersedes the UI parts of the two 2026-09-07 form-builder
+entries (the RFQ document model + PDF are unchanged).
 **Status:** implemented (production build green; not verified in a running app —
 the local dev environment has no Postgres database).
 

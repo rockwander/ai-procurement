@@ -107,6 +107,13 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
      preview. This is distinct from the outline → confirm → apply flow, which
      handles *structural* (re)generation; edits are a refinement layer on the
      already-applied RFQ.
+   - **Clicking a passage scopes the chat to it.** Any heading, field,
+     question or term in the RFQ preview is clickable — it rings the passage
+     and the composer shows "re: …", so the buyer's next message is feedback
+     about that passage ("this question is too vague", "we don't need this
+     term"). The Edit Agent interprets the feedback and applies the change it
+     implies; if the feedback isn't actionable it replies without changing the
+     document.
    - **The AI never marks a field mandatory on its own.** On generation /
      regeneration, every commercial field and questionnaire question is
      optional unless the buyer explicitly asked for it to be required.
@@ -247,7 +254,12 @@ recorded in `/updates.md`.
    schema + line items + PDF re-derived), and the changed rows briefly
    highlight in the preview. The **outline → confirm → apply** flow for
    *structural* (re)generation is unchanged; natural-language edits are a
-   refinement layer on top of an already-applied document.
+   refinement layer on top of an already-applied document. In the preview,
+   **any heading, field, question or term is clickable** — it rings the
+   passage and scopes the chat to it ("re: …"), so the buyer's next message is
+   feedback about that passage. The agent applies the change the feedback
+   implies (reword a vague question, drop a term, …), or replies without
+   changing anything when it isn't actionable.
 
 2. **The drafting AI must not mark any field mandatory on its own.** When the
    AI generates or regenerates the RFQ, every commercial field and
@@ -256,8 +268,9 @@ recorded in `/updates.md`.
    back required by default.)
 
 **Affects:** §2 step 1 (Create RFQ — the "form builder" view becomes a
-read-only preview; edits go through the chat); Drafting Agent (required = false
-unless asked); new Edit Agent; `draft-chat` route (`action: 'edit'`).
+read-only preview; edits and passage-scoped feedback go through the chat);
+Drafting Agent (required = false unless asked); new Edit Agent; `draft-chat`
+route (`action: 'edit'`, optional `scope`).
 **Supersedes** the UI parts of *"Form builder must define the form, not fill
 it"* (2026-09-07) and *"Conversational RFQ creation with synced PDF + form
 builder"* (2026-09-07) — the `RFQDocument` model and PDF are unchanged; only the

@@ -79,12 +79,16 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { message, action, tickedSectionIds } = body as {
+    const { message, action, tickedSectionIds, scope } = body as {
       message?: string;
       action?: 'message' | 'outline' | 'apply' | 'edit';
       tickedSectionIds?: string[];
+      /** the RFQ-preview passage the buyer is commenting on (edit action) */
+      scope?: { label?: string; text?: string };
     };
     const text = sanitizeText(message ?? '');
+    const scopeLabel = sanitizeText(scope?.label ?? '');
+    const scopeText = sanitizeText(scope?.text ?? '');
 
     // ---------------------------------------------------------------- apply --
     if (action === 'apply') {
@@ -165,8 +169,18 @@ export async function POST(
         rfqId: id,
         role: 'user',
         kind: 'message',
-        content: text,
+        content: scopeLabel ? `[re: ${scopeLabel}] ${text}` : text,
       });
+
+      // When the buyer clicked a passage, prepend it so the agent knows what
+      // the feedback is about.
+      const instruction = scopeLabel
+        ? `The buyer is commenting on this part of the RFQ:\n` +
+          `  ${scopeLabel}${scopeText ? ` — ${scopeText}` : ''}\n\n` +
+          `Their feedback: ${text}\n\n` +
+          `Apply a change if the feedback implies one; otherwise leave the ` +
+          `document unchanged and explain why in the summary.`
+        : text;
 
       const history = await db
         .select()
@@ -188,7 +202,7 @@ export async function POST(
       const result = await editAgent.applyEdit(
         {
           doc: currentDoc,
-          instruction: text,
+          instruction,
           thread,
           buyerName: user.name,
           rfqId: id,
@@ -209,8 +223,26 @@ export async function POST(
         return NextResponse.json({ assistant: saved, edited: false }, { status: 502 });
       }
 
+      const changedFieldIds = diffFieldIds(currentDoc, result.data.doc);
+      const docUnchanged =
+        JSON.stringify(currentDoc) === JSON.stringify(result.data.doc);
+
+      // Nothing actually changed — the feedback was a question / not actionable.
+      // Don't re-persist or snapshot a new version; just reply.
+      if (docUnchanged) {
+        const [saved] = await db
+          .insert(rfqDraftMessages)
+          .values({
+            rfqId: id,
+            role: 'assistant',
+            kind: 'message',
+            content: result.data.summary,
+          })
+          .returning();
+        return NextResponse.json({ assistant: saved, edited: false });
+      }
+
       const applied = await applyRFQDocument(id, result.data.doc, 'ai');
-      const changedFieldIds = diffFieldIds(currentDoc, applied);
 
       const [saved] = await db
         .insert(rfqDraftMessages)

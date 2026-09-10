@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
-import { RFQDocumentPreview } from '@/components/RFQDocumentPreview';
+import { RFQDocumentPreview, type PreviewScope } from '@/components/RFQDocumentPreview';
 import { OutlineReview } from '@/components/OutlineReview';
 import { Button, Card, Spinner, ErrorText, PaperclipIcon, SendIcon } from '@/components/ui';
 import { api } from '@/lib/fetcher';
@@ -45,6 +45,8 @@ export default function NewRFQPage() {
   const [pdfNonce, setPdfNonce] = useState(0);
   // field ids the last AI edit touched — briefly highlighted in the preview
   const [changedFieldIds, setChangedFieldIds] = useState<string[]>([]);
+  // the preview passage the buyer clicked to comment on (scopes the next message)
+  const [scope, setScope] = useState<PreviewScope | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -132,6 +134,7 @@ export default function NewRFQPage() {
     if (!rfqId || busy) return;
     const text = input.trim();
     if (!text) return;
+    const commentScope = scope;
     setBusy(true);
     setError('');
     setMessages((m) => [
@@ -140,11 +143,12 @@ export default function NewRFQPage() {
         id: `tmp-${Date.now()}`,
         role: 'user',
         kind: 'message',
-        content: text,
+        content: commentScope ? `re: ${commentScope.label}\n${text}` : text,
         attachmentName: null,
       },
     ]);
     setInput('');
+    setScope(null);
     try {
       const res = await api<{
         assistant: DraftMessage;
@@ -153,7 +157,13 @@ export default function NewRFQPage() {
         changedFieldIds?: string[];
       }>(`/api/rfqs/${rfqId}/draft-chat`, {
         method: 'POST',
-        body: JSON.stringify({ message: text, action: 'edit' }),
+        body: JSON.stringify({
+          message: text,
+          action: 'edit',
+          scope: commentScope
+            ? { label: commentScope.label, text: commentScope.text }
+            : undefined,
+        }),
       });
       setMessages((m) => [...m, res.assistant]);
       if (res.edited && res.rfqDocument) {
@@ -168,6 +178,16 @@ export default function NewRFQPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // The buyer clicked a passage in the RFQ preview to comment on it.
+  function activateScope(s: PreviewScope) {
+    setScope(s);
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-field="${CSS.escape(s.id)}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   }
 
   async function apply(tickedIds: string[]) {
@@ -347,6 +367,22 @@ export default function NewRFQPage() {
               }}
             />
 
+            {scope && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 pl-2 pr-1 py-0.5 max-w-[260px]">
+                  <span className="truncate">re: {scope.label}</span>
+                  <button
+                    onClick={() => setScope(null)}
+                    className="text-blue-500 hover:text-blue-800 leading-none px-0.5 shrink-0"
+                    aria-label="Clear comment focus"
+                  >
+                    ×
+                  </button>
+                </span>
+                <span className="text-gray-400">your next message is feedback on this</span>
+              </div>
+            )}
+
             {/* Composer: textarea with an inline clip + send */}
             <div
               className={`relative rounded-lg border ${
@@ -369,8 +405,10 @@ export default function NewRFQPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={
-                  hasContent
-                    ? 'Ask for a change — rename a field, make it required, change a type, add or remove a field…'
+                  scope
+                    ? `Your feedback on “${scope.label}”…`
+                    : hasContent
+                    ? 'Ask for a change — rename a field, make it required, change a type, add or remove a field. Or click a passage in the preview to comment on it.'
                     : 'Describe the need, paste content, or ask for a change…  Attach docs with the clip.'
                 }
                 onKeyDown={(e) => {
@@ -482,7 +520,12 @@ export default function NewRFQPage() {
               />
             ) : doc ? (
               <div className="p-5">
-                <RFQDocumentPreview doc={doc} changedFieldIds={changedFieldIds} />
+                <RFQDocumentPreview
+                  doc={doc}
+                  changedFieldIds={changedFieldIds}
+                  activeScopeId={scope?.id}
+                  onScope={activateScope}
+                />
               </div>
             ) : (
               <Spinner label="Loading…" />
