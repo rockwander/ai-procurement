@@ -98,8 +98,8 @@ export default function MailboxPage() {
 
   return (
     <AppShell>
-      <div className="flex items-baseline justify-between mb-2">
-        <h1 className="text-2xl font-bold text-gray-900">Supplier Mailbox</h1>
+      <div className="flex items-baseline justify-between gap-3 mb-2">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Supplier Mailbox</h1>
         <button onClick={load} className="text-sm text-blue-600 hover:underline">
           Refresh
         </button>
@@ -114,8 +114,8 @@ export default function MailboxPage() {
         <Spinner label="Loading mailbox…" />
       ) : (
         <div className="grid lg:grid-cols-5 gap-6">
-          {/* List */}
-          <div className="lg:col-span-2">
+          {/* List — hidden on mobile once an email is open (detail takes over) */}
+          <div className={`lg:col-span-2 ${selected ? 'hidden lg:block' : ''}`}>
             <Card className="divide-y divide-gray-100 overflow-hidden">
               {emails.length === 0 && (
                 <div className="p-6 text-sm text-gray-500">
@@ -155,14 +155,20 @@ export default function MailboxPage() {
             </Card>
           </div>
 
-          {/* Reader + reply */}
-          <div className="lg:col-span-3">
+          {/* Reader + reply — hidden on mobile until an email is open */}
+          <div className={`lg:col-span-3 ${selected ? '' : 'hidden lg:block'}`}>
             {!selected ? (
               <Card className="p-8 text-center text-gray-400">
                 Select an email to read it.
               </Card>
             ) : (
-              <Card className="p-5 space-y-4">
+              <Card className="p-4 sm:p-5 space-y-4">
+                <button
+                  onClick={() => setSelected(null)}
+                  className="lg:hidden text-sm text-blue-600 hover:underline -mb-1"
+                >
+                  ← Back to mailbox
+                </button>
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <Badge>{TYPE_LABEL[selected.type]}</Badge>
@@ -194,7 +200,7 @@ export default function MailboxPage() {
                 )}
 
                 <div
-                  className="border border-gray-200 rounded-lg p-4 bg-white max-h-[420px] overflow-y-auto text-sm [&_a]:text-blue-600 [&_a]:underline [&_h1]:text-lg [&_h1]:font-bold [&_h2]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+                  className="border border-gray-200 rounded-lg p-3 sm:p-4 bg-white max-h-[60vh] lg:max-h-[420px] overflow-auto text-sm [&_a]:text-blue-600 [&_a]:underline [&_a]:break-words [&_h1]:text-lg [&_h1]:font-bold [&_h2]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_img]:max-w-full [&_table]:block [&_table]:overflow-x-auto"
                   dangerouslySetInnerHTML={{ __html: sanitizeBody(selected.bodyHtml) }}
                 />
 
@@ -204,9 +210,9 @@ export default function MailboxPage() {
                     <div className="text-sm font-medium text-gray-900">
                       Reply as {selected.supplierName || 'the supplier'}
                     </div>
-                    <p className="text-xs text-gray-500">
-                      From: <span className="font-mono">{selected.supplierEmail}</span> · subject
-                      kept as “Re: …” so the reference matches.
+                    <p className="text-xs text-gray-500 break-words">
+                      From: <span className="font-mono break-all">{selected.supplierEmail}</span> ·
+                      subject kept as “Re: …” so the reference matches.
                     </p>
                     <Textarea
                       rows={4}
@@ -238,7 +244,7 @@ export default function MailboxPage() {
                         {flash}
                       </div>
                     )}
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       <Button
                         onClick={sendReply}
                         disabled={sending || (!replyBody.trim() && replyFiles.length === 0)}

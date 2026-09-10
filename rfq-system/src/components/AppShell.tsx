@@ -49,12 +49,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-6">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <Link href="/dashboard" className="font-bold text-gray-900">
               RFQ System
             </Link>
-            <nav className="flex gap-4 text-sm">
+            <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
               <Link href="/dashboard/rfqs" className="text-gray-600 hover:text-gray-900">
                 RFQs
               </Link>
@@ -80,7 +80,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{children}</main>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">{children}</main>
     </div>
   );
 }
