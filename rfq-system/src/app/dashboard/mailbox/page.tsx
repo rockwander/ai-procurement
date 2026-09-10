@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { Card, Badge, Button, Textarea, Spinner, ErrorText, PaperclipIcon } from '@/components/ui';
 import { api } from '@/lib/fetcher';
+import { SUPPORTED_DOC_EXTENSIONS } from '@/lib/doc-types';
 
 interface MailboxEmail {
   id: string;
@@ -227,7 +228,7 @@ export default function MailboxPage() {
                         type="file"
                         multiple
                         className="hidden"
-                        accept=".pdf,.docx,.csv,.txt,.md"
+                        accept={SUPPORTED_DOC_EXTENSIONS.join(',')}
                         onChange={(ev) =>
                           setReplyFiles(Array.from(ev.target.files ?? []))
                         }

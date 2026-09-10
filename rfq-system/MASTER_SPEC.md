@@ -29,7 +29,11 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
      RFQ is created immediately. There is no policy-selection step.
    - **Inputs.** The buyer assembles inputs for the RFQ by any mix of:
      - attaching **multiple documents** (e.g. business requirements, policy
-       documents — more than one of each is allowed), and
+       documents — more than one of each is allowed). Readable formats are
+       PDF, Word (.docx), CSV, plain text / Markdown, **and images**
+       (PNG / JPEG / WebP / GIF — photos, scans, screenshots). Images are
+       transcribed to text server-side via Gemini vision; only the text is
+       kept in the thread, and
      - **pasting content directly** as text.
    - **Chat.** The create-RFQ screen is a chat. The buyer keeps adding
      documents / pasted content / instructions across multiple turns,
@@ -168,7 +172,10 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
 - **Not a form. A chat + live document preview.** Two panes: AI chat (left),
   a preview of the supplier's quotation (right), a free-text notes area (below).
 - The supplier types, pastes, or attaches documents; the **Autofill Agent**
-  runs each turn and fills the **fixed per-line table** (§2 — `canSupply`,
+  runs each turn and fills the **fixed per-line table**
+  (attachments may be PDF, Word, CSV, text, or an **image** — photo / scan /
+  screenshot of a quote or price list — transcribed to text via Gemini vision;
+  the binary is never stored) (§2 — `canSupply`,
   `unitPrice`, `currency`, `quotedUom`, `availableQty`, `leadTimeDays`, `moq`)
   plus the buyer-defined quote-level fields and questionnaire. The preview is a
   **templated rendering of that table** — each field a tagged element — not a
@@ -274,6 +281,21 @@ Product-owner use-case refinements only, newest first. Each entry is also
 recorded in `/updates.md`.
 
 <!-- Add new entries directly below this line -->
+
+### 2026-09-10 — Chat attachments accept images (supplier quote assistant + create-RFQ)
+
+**Refinement:** Both AI chats that take document attachments — the supplier
+quote assistant (`/quote/[token]`) and the create-RFQ conversation — now
+accept image files (PNG / JPEG / WebP / GIF): photos, scans, and screenshots
+of quotes, price lists, and spec sheets. Images are transcribed to text
+server-side by Gemini vision (`doc-extract.ts`) and then flow through the
+existing text-only pipeline (Autofill Agent / RFQ Drafting + Edit Agents)
+unchanged. The binary is never stored — only the transcription. Emailed
+image attachments on supplier replies are handled the same way
+(`inbound-email.ts`).
+
+**Affects:** §2 step 1 (Create RFQ — Inputs), §3 (Supplier Flow), inbound-email
+parsing.
 
 ### 2026-09-10 — Buyer refines the RFQ by chat; AI never auto-marks fields mandatory
 

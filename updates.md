@@ -21,6 +21,18 @@ Entry format:
 
 <!-- Add new entries directly below this line -->
 
+## 2026-09-10 — Chat attachments accept images (supplier quote assistant + create-RFQ)
+**Refinement:** Both AI chats that take document attachments — the supplier
+quote assistant (`/quote/[token]`) and the create-RFQ conversation — now
+accept image files (PNG / JPEG / WebP / GIF): photos, scans, and screenshots
+of quotes, price lists, spec sheets. Images are transcribed to text
+server-side via Gemini vision and flow through the existing text-only
+pipeline; the binary is never stored. Emailed image attachments on supplier
+replies are handled the same way.
+**Affects:** MASTER_SPEC §2 (Create RFQ — Inputs), §3 (Supplier Flow),
+inbound-email parsing.
+**Status:** implemented
+
 ## 2026-09-10 — Buyer refines the RFQ by chat; AI never auto-marks fields mandatory
 **Refinement:** Two changes to create-RFQ:
 

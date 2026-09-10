@@ -66,7 +66,7 @@ export function QuoteChat({
     {
       role: 'assistant',
       content:
-        'Attach your quotation, price list, rate card or certificates (PDF, Word, CSV) or paste the details here. I\'ll read them into your quote and tell you what still needs your input. Click any value to correct it, or click a heading / terms clause to raise a caveat — I\'ll change what I can and note the rest for the buyer.',
+        'Attach your quotation, price list, rate card or certificates (PDF, Word, CSV, or a photo / screenshot) or paste the details here. I\'ll read them into your quote and tell you what still needs your input. Click any value to correct it, or click a heading / terms clause to raise a caveat — I\'ll change what I can and note the rest for the buyer.',
     },
   ]);
   const [input, setInput] = useState('');
