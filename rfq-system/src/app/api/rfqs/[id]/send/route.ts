@@ -95,6 +95,8 @@ export async function POST(
             content: pdfBuffer,
           },
           deadline: rfq.deadline ? new Date(rfq.deadline).toISOString() : undefined,
+          rfqId: rfq.id,
+          token: invitation.token,
         },
         rfq.id,
         invitation.id

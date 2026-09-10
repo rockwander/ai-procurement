@@ -1,5 +1,12 @@
 import { db } from '@/db';
-import { rfqInvitations, rfqs, rfqLineItems, suppliers, quoteSubmissions } from '@/db/schema';
+import {
+  rfqInvitations,
+  rfqs,
+  rfqLineItems,
+  suppliers,
+  quoteSubmissions,
+  quoteDrafts,
+} from '@/db/schema';
 import { eq, asc } from 'drizzle-orm';
 
 /**
@@ -31,5 +38,10 @@ export async function loadQuoteContext(token: string) {
     .from(quoteSubmissions)
     .where(eq(quoteSubmissions.rfqInvitationId, row.invitation.id));
 
-  return { ...row, lineItems, submission: submission ?? null };
+  const [draft] = await db
+    .select()
+    .from(quoteDrafts)
+    .where(eq(quoteDrafts.rfqInvitationId, row.invitation.id));
+
+  return { ...row, lineItems, submission: submission ?? null, draft: draft ?? null };
 }

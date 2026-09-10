@@ -48,6 +48,8 @@ export async function POST(
         formLink,
         deadline: row.rfq.deadline ? new Date(row.rfq.deadline).toISOString() : undefined,
         daysRemaining,
+        rfqId: row.rfq.id,
+        token: row.invitation.token,
       },
       id
     );

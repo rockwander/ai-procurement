@@ -8,6 +8,8 @@ import { AutofillAgent, type AutofillLineItem } from '@/lib/agents/autofill';
 import { applyAgentPatches } from '@/lib/line-response-status';
 import type { FormSchema } from '@/lib/form-schema';
 import { normalizeRFQDocument } from '@/lib/rfq-document';
+import type { RFQLineForResponse } from '@/lib/line-response';
+import { seedDraftState, mergePatchesIntoDraft, saveDraft } from '@/lib/quote-draft';
 
 // Public: AI assistant for the supplier document-preview flow.
 // The supplier types a message and/or attaches documents (optionally scoped to
@@ -142,6 +144,23 @@ export async function POST(
     }
 
     const applied = applyAgentPatches(patches, formSchema.fields ?? []);
+
+    // Keep the server-side draft current so the quote survives a reload and
+    // email → link → chat round-trips (REQUIREMENT_quote-via-email.md §6).
+    if (
+      Object.keys(applied.linePatches).length ||
+      Object.keys(applied.formPatches).length
+    ) {
+      const lines: RFQLineForResponse[] = ctx.lineItems.map((li) => ({
+        id: li.id,
+        itemDescription: li.itemDescription,
+        quantity: li.quantity,
+        unit: li.unit,
+      }));
+      const seeded = seedDraftState(lines, rfqCurrency, ctx.draft);
+      const merged = mergePatchesIntoDraft(seeded, applied);
+      await saveDraft(ctx.invitation.id, merged, 'link');
+    }
 
     // Compose a short summary when the doc path ran.
     if (hasDocs && !assistantMessage) {

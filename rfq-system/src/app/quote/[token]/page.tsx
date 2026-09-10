@@ -41,6 +41,13 @@ interface QuoteData {
   lineItems: LineItemInput[];
   submitted: boolean;
   submission: { formData: any; lineItems: any[]; exceptions?: QuoteException[] } | null;
+  draft: {
+    lineResponses: Record<string, any>;
+    formData: Record<string, any>;
+    notes: string;
+    provenance: ProvenanceMap;
+    source: 'email' | 'link';
+  } | null;
 }
 
 export default function SupplierQuotePage() {
@@ -50,6 +57,7 @@ export default function SupplierQuotePage() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [justSubmitted, setJustSubmitted] = useState(false);
+  const [fromEmail, setFromEmail] = useState(false);
 
   const [value, setValue] = useState<QuoteFormValue>({
     formData: {},
@@ -67,29 +75,50 @@ export default function SupplierQuotePage() {
       .then((d) => {
         setData(d);
         const lineResponses: Record<string, LineItemResponse> = {};
-        const byId = new Map(
+        const submissionById = new Map(
           (d.submission?.lineItems ?? []).map((li: any) => [String(li.itemId), li])
         );
+        const draftById = new Map(
+          Object.entries(d.draft?.lineResponses ?? {}).map(([k, v]) => [String(k), v])
+        );
         for (const li of d.lineItems) {
-          lineResponses[li.id] = d.submission
-            ? normaliseLineResponse(byId.get(li.id), li as RFQLineForResponse, d.rfq.currency)
-            : emptyLineResponse(li as RFQLineForResponse, d.rfq.currency);
+          if (d.submission) {
+            lineResponses[li.id] = normaliseLineResponse(
+              submissionById.get(li.id),
+              li as RFQLineForResponse,
+              d.rfq.currency
+            );
+          } else if (d.draft && draftById.has(li.id)) {
+            lineResponses[li.id] = normaliseLineResponse(
+              draftById.get(li.id),
+              li as RFQLineForResponse,
+              d.rfq.currency
+            );
+          } else {
+            lineResponses[li.id] = emptyLineResponse(li as RFQLineForResponse, d.rfq.currency);
+          }
         }
         setValue({
-          formData: d.submission?.formData ?? {},
+          formData: d.submission?.formData ?? d.draft?.formData ?? {},
           lineResponses,
-          notes: '',
+          notes: d.draft?.notes ?? '',
         });
         if (d.submission?.exceptions?.length) setExceptions(d.submission.exceptions);
-        // Seed provenance: system-inferred defaults start as "assumed" (amber)
-        // so the supplier is nudged to confirm currency / UoM etc.
+        // Provenance: from the persisted draft if there is one; otherwise seed
+        // the system-inferred defaults as "assumed" (amber) so the supplier is
+        // nudged to confirm currency / UoM etc.
         if (!d.submission) {
-          const prov: ProvenanceMap = {};
-          for (const li of d.lineItems) {
-            prov[`line:${li.id}:currency`] = { isDefault: true, rationale: `Assumed ${d.rfq.currency} — the RFQ currency` };
-            prov[`line:${li.id}:quotedUom`] = { isDefault: true, rationale: `Assumed from the asked unit "${li.unit}"` };
+          if (d.draft) {
+            setFromEmail(d.draft.source === 'email');
+            setProvenance(d.draft.provenance ?? {});
+          } else {
+            const prov: ProvenanceMap = {};
+            for (const li of d.lineItems) {
+              prov[`line:${li.id}:currency`] = { isDefault: true, rationale: `Assumed ${d.rfq.currency} — the RFQ currency` };
+              prov[`line:${li.id}:quotedUom`] = { isDefault: true, rationale: `Assumed from the asked unit "${li.unit}"` };
+            }
+            setProvenance(prov);
           }
-          setProvenance(prov);
         }
       })
       .catch((e) => setError(e.message))
@@ -108,6 +137,26 @@ export default function SupplierQuotePage() {
       value.formData
     );
   }, [data, schema, value]);
+
+  // Persist the in-progress quote server-side (debounced) so a reload — or an
+  // email → link → email round-trip — doesn't lose work. Skipped once locked.
+  useEffect(() => {
+    if (!data || locked) return;
+    const t = setTimeout(() => {
+      api(`/api/quote/${token}/draft`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          lineResponses: value.lineResponses,
+          formData: value.formData,
+          notes: value.notes,
+          provenance,
+        }),
+      }).catch(() => {
+        /* draft persistence is best-effort */
+      });
+    }, 800);
+    return () => clearTimeout(t);
+  }, [data, locked, token, value, provenance]);
 
   const confirmField = useCallback((targetId: string) => {
     setProvenance((prev) => ({
@@ -265,7 +314,16 @@ export default function SupplierQuotePage() {
               </p>
             </div>
           ) : (
-            <NeedsAttentionPanel list={attention} onJump={jumpToField} />
+            <>
+              {fromEmail && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+                  We filled this in from your email reply. Check the highlighted
+                  fields, clear anything still needed below, then submit. Your
+                  quotation is <strong>not submitted yet</strong>.
+                </div>
+              )}
+              <NeedsAttentionPanel list={attention} onJump={jumpToField} />
+            </>
           )}
 
           <div className="bg-white rounded-lg border border-gray-200 p-5">

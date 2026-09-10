@@ -6,6 +6,7 @@ import { badRequest, notFound, serverError } from '@/lib/api';
 import { loadQuoteContext } from '@/lib/quote-access';
 import { normalizeRFQDocument, rfqDocumentToText, emptyRFQDocument } from '@/lib/rfq-document';
 import { normaliseLineResponse, type RFQLineForResponse } from '@/lib/line-response';
+import { deleteDraft } from '@/lib/quote-draft';
 
 // Public: load the RFQ + form schema for a supplier's tokenized link.
 export async function GET(
@@ -66,6 +67,19 @@ export async function GET(
             submittedAt: ctx.submission.submittedAt,
           }
         : null,
+      // In-progress quote persisted server-side (e.g. seeded from an email
+      // response). The page seeds its state from this when there's no
+      // submission yet. See REQUIREMENT_quote-via-email.md §6.
+      draft:
+        ctx.invitation.status !== 'submitted' && ctx.draft
+          ? {
+              lineResponses: ctx.draft.lineResponses,
+              formData: ctx.draft.formData,
+              notes: ctx.draft.notes ?? '',
+              provenance: ctx.draft.provenance,
+              source: ctx.draft.source,
+            }
+          : null,
     });
   } catch (error) {
     return serverError(error);
@@ -164,6 +178,9 @@ export async function POST(
       .update(rfqInvitations)
       .set({ status: 'submitted', submittedAt: new Date() })
       .where(eq(rfqInvitations.id, ctx.invitation.id));
+
+    // The draft has served its purpose.
+    await deleteDraft(ctx.invitation.id);
 
     return NextResponse.json({ submission }, { status: 201 });
   } catch (error) {

@@ -4,6 +4,32 @@ import { emailLogs } from '@/db/schema';
 
 const FROM_EMAIL = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 
+// ---------------------------------------------------------------------------
+// Subject-line token marker
+//
+// A supplier can respond to an RFQ by simply replying to the invitation email
+// (see REQUIREMENT_quote-via-email.md). The inbound webhook matches the reply
+// to an invitation by a machine-readable marker in the subject, which the mail
+// client preserves on "Re:". Format: "  [ref: <rfqId> / <token>]".
+// ---------------------------------------------------------------------------
+
+const REF_MARKER_RE = /\[ref:\s*([0-9a-fA-F-]{8,})\s*\/\s*([0-9a-f]{16,})\s*\]/;
+
+export function refMarker(rfqId: string, token: string): string {
+  return `[ref: ${rfqId} / ${token}]`;
+}
+
+export function subjectWithRef(base: string, rfqId: string, token: string): string {
+  return `${base}  ${refMarker(rfqId, token)}`;
+}
+
+/** Pull the invitation token out of a (possibly "Re:"-prefixed) subject line. */
+export function parseRefMarker(subject: string): { rfqId: string; token: string } | null {
+  const m = REF_MARKER_RE.exec(subject || '');
+  if (!m) return null;
+  return { rfqId: m[1], token: m[2] };
+}
+
 // Lazy: don't construct the Resend client at module load — it throws when
 // RESEND_API_KEY is absent, which breaks `next build` page-data collection.
 let _resend: Resend | null = null;
@@ -30,6 +56,9 @@ export interface SendRFQEmailParams {
     content: Buffer;
   };
   deadline?: string;
+  /** rfq id + invitation token — appended to the subject as a reply marker */
+  rfqId: string;
+  token: string;
 }
 
 export interface SendReminderEmailParams {
@@ -39,6 +68,8 @@ export interface SendReminderEmailParams {
   formLink: string;
   deadline?: string;
   daysRemaining?: number;
+  rfqId: string;
+  token: string;
 }
 
 export interface SendPOEmailParams {
@@ -55,7 +86,7 @@ export interface SendPOEmailParams {
 // Send RFQ Invitation Email
 export async function sendRFQEmail(params: SendRFQEmailParams, rfqId?: string, invitationId?: string) {
   try {
-    const subject = `RFQ: ${params.rfqTitle}`;
+    const subject = subjectWithRef(`RFQ: ${params.rfqTitle}`, params.rfqId, params.token);
 
     const html = `
       <!DOCTYPE html>
@@ -86,26 +117,31 @@ export async function sendRFQEmail(params: SendRFQEmailParams, rfqId?: string, i
 
             ${params.deadline ? `<p><strong>Deadline:</strong> ${new Date(params.deadline).toLocaleDateString()}</p>` : ''}
 
-            <p>To submit your quote, please:</p>
+            <p>You can respond in either of two ways:</p>
             <ol>
-              <li>Review the attached RFQ document (PDF)</li>
-              <li>Click the button below to access the quote submission form</li>
-              <li>Fill in all required fields</li>
-              <li>Submit before the deadline</li>
+              <li><strong>Open the link</strong> below — an AI assistant helps you
+                build your quotation and shows a live preview; or</li>
+              <li><strong>Reply to this email</strong> — attach your quotation
+                (PDF, price list, spreadsheet as PDF, spec sheet — any readable
+                format) and/or write your prices in the reply. We'll read it and
+                email you back confirming what was captured and whether anything
+                still needs your attention.</li>
             </ol>
 
             <p style="text-align: center;">
-              <a href="${params.formLink}" class="button">Submit Quote</a>
+              <a href="${params.formLink}" class="button">Open quotation</a>
             </p>
 
-            <p><strong>Important:</strong> Direct email replies will not be accepted. Please use the form link above to submit your quote.</p>
+            <p><strong>Please keep the subject line unchanged when you reply</strong>
+              — it carries a reference we use to match your response to this RFQ.</p>
 
             <p>If you have any questions, please contact our procurement team.</p>
 
             <p>Best regards,<br>Procurement Team</p>
           </div>
           <div class="footer">
-            <p>This is an automated email. Please do not reply directly to this message.</p>
+            <p>Replying to this email is fine. Keep the subject line intact so we
+              can match your quotation to the right RFQ.</p>
           </div>
         </div>
       </body>
@@ -140,6 +176,10 @@ export async function sendRFQEmail(params: SendRFQEmailParams, rfqId?: string, i
       status: error ? 'failed' : 'sent',
       externalId: data?.id,
       errorMessage: error?.message,
+      bodyHtml: html,
+      attachments: params.pdfAttachment
+        ? [{ filename: params.pdfAttachment.filename, bytes: params.pdfAttachment.content.length }]
+        : [],
     });
 
     if (error) {
@@ -161,7 +201,11 @@ export async function sendRFQEmail(params: SendRFQEmailParams, rfqId?: string, i
 // Send Reminder Email
 export async function sendReminderEmail(params: SendReminderEmailParams, invitationId?: string) {
   try {
-    const subject = `Reminder: RFQ Quote Submission - ${params.rfqTitle}`;
+    const subject = subjectWithRef(
+      `Reminder: RFQ Quote Submission - ${params.rfqTitle}`,
+      params.rfqId,
+      params.token
+    );
 
     const html = `
       <!DOCTYPE html>
@@ -222,6 +266,8 @@ export async function sendReminderEmail(params: SendReminderEmailParams, invitat
       status: error ? 'failed' : 'sent',
       externalId: data?.id,
       errorMessage: error?.message,
+      bodyHtml: html,
+      attachments: [],
     });
 
     if (error) {
@@ -312,6 +358,8 @@ export async function sendPOEmail(params: SendPOEmailParams, poId?: string) {
       status: error ? 'failed' : 'sent',
       externalId: data?.id,
       errorMessage: error?.message,
+      bodyHtml: html,
+      attachments: [{ filename: params.pdfAttachment.filename, bytes: params.pdfAttachment.content.length }],
     });
 
     if (error) {
@@ -327,5 +375,208 @@ export async function sendPOEmail(params: SendPOEmailParams, poId?: string) {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Quote acknowledgement — reply to a supplier who responded by email
+// (REQUIREMENT_quote-via-email.md §5)
+// ---------------------------------------------------------------------------
+
+export interface QuoteAckBlockerGroup {
+  heading: string;
+  items: string[];
+}
+export interface QuoteAckLowConfidence {
+  label: string;
+  value: string;
+  rationale: string;
+}
+
+export interface SendQuoteAckParams {
+  to: string;
+  supplierName: string;
+  rfqTitle: string;
+  rfqId: string;
+  token: string;
+  formLink: string;
+  /** subject of the email the supplier sent, so we can reply "Re: …" and keep the marker */
+  inReplySubject: string;
+  outcome: 'submitted' | 'blocked' | 'verify';
+  blockers: QuoteAckBlockerGroup[];
+  lowConfidence: QuoteAckLowConfidence[];
+  /** attachment filenames we could not read */
+  unreadableAttachments: string[];
+}
+
+export async function sendQuoteAckEmail(
+  params: SendQuoteAckParams,
+  rfqInvitationId?: string
+) {
+  try {
+    const baseSubject = params.inReplySubject.replace(/^\s*(re:\s*)+/i, '').trim();
+    const subject = `Re: ${
+      baseSubject.includes('[ref:')
+        ? baseSubject
+        : subjectWithRef(baseSubject || `RFQ: ${params.rfqTitle}`, params.rfqId, params.token)
+    }`;
+
+    const headline =
+      params.outcome === 'submitted'
+        ? { color: '#10b981', text: 'Your quotation has been submitted' }
+        : params.outcome === 'blocked'
+        ? { color: '#dc2626', text: 'Your quotation has NOT been submitted' }
+        : { color: '#f59e0b', text: 'Your quotation is ready but NOT yet submitted' };
+
+    const blockerHtml = params.blockers.length
+      ? `<h3 style="margin-bottom:6px;">Still needed</h3><ul>${params.blockers
+          .map(
+            (g) =>
+              `<li><strong>${g.heading}:</strong> ${g.items.length} — ${g.items
+                .map((i) => escapeHtml(i))
+                .join('; ')}</li>`
+          )
+          .join('')}</ul>`
+      : '';
+
+    const verifyHtml = params.lowConfidence.length
+      ? `<h3 style="margin-bottom:6px;">Please verify</h3><ul>${params.lowConfidence
+          .map(
+            (l) =>
+              `<li><strong>${escapeHtml(l.label)}</strong> — we have <em>${escapeHtml(
+                l.value
+              )}</em> (${escapeHtml(l.rationale)})</li>`
+          )
+          .join('')}</ul>`
+      : '';
+
+    const unreadableHtml = params.unreadableAttachments.length
+      ? `<p style="color:#b45309;">We could not read: ${params.unreadableAttachments
+          .map((a) => `<code>${escapeHtml(a)}</code>`)
+          .join(', ')}. Please attach these as PDF, or enter the values at the link.</p>`
+      : '';
+
+    const bodyIntro =
+      params.outcome === 'submitted'
+        ? `<p>We read your email and everything needed was present and clear. Your
+             quotation for <strong>${escapeHtml(params.rfqTitle)}</strong> is now
+             recorded and <strong>locked</strong> — it cannot be changed. You can
+             review exactly what was submitted at the link below.</p>`
+        : params.outcome === 'blocked'
+        ? `<p>We read your email but some required information is still missing.
+             Your quotation will not be considered until you open the link below,
+             fill in the items listed, and press <strong>Submit</strong>.</p>`
+        : `<p>We filled in everything from your email, but a few values are
+             assumptions we need you to confirm. Open the link below, check the
+             highlighted fields, and press <strong>Submit</strong>.</p>`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: ${headline.color}; color: white; padding: 18px; text-align: center; }
+          .content { background: #f9fafb; padding: 28px; }
+          .button { display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 5px; margin: 18px 0; }
+          ul { padding-left: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header"><h2 style="margin:0;">${headline.text}</h2></div>
+          <div class="content">
+            <p>Dear ${escapeHtml(params.supplierName)},</p>
+            ${bodyIntro}
+            ${unreadableHtml}
+            ${blockerHtml}
+            ${verifyHtml}
+            <p style="text-align:center;">
+              <a href="${params.formLink}" class="button">Open your quotation (preview + AI assistant)</a>
+            </p>
+            <p>You can reply to this email again with corrections — keep the
+              subject line unchanged so we can match it.</p>
+            <p>Best regards,<br>Procurement Team</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: params.to,
+      subject,
+      html,
+    });
+
+    await db.insert(emailLogs).values({
+      recipientEmail: params.to,
+      subject,
+      type: 'quote_ack',
+      rfqId: params.rfqId,
+      rfqInvitationId,
+      status: error ? 'failed' : 'sent',
+      externalId: data?.id,
+      errorMessage: error?.message,
+      bodyHtml: html,
+      attachments: [],
+    });
+
+    if (error) {
+      console.error('Failed to send quote-ack email:', error);
+      return { success: false, error: error.message };
+    }
+    console.log(`✅ Quote-ack email sent to ${params.to} (${params.outcome})`);
+    return { success: true, emailId: data?.id };
+  } catch (error) {
+    console.error('Error sending quote-ack email:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * A bare "Re:" reply with no template — used for the "we couldn't match your
+ * email" / "sender mismatch" guidance messages. Logged so it shows in the
+ * Supplier Mailbox simulator.
+ */
+export async function sendPlainReply(to: string, inReplySubject: string, message: string) {
+  try {
+    const base = inReplySubject.replace(/^\s*(re:\s*)+/i, '').trim();
+    const subject = `Re: ${base || 'Your RFQ response'}`;
+    const html = `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;">
+      <p>${escapeHtml(message)}</p><p>Best regards,<br>Procurement Team</p></body></html>`;
+
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to,
+      subject,
+      html,
+    });
+    await db.insert(emailLogs).values({
+      recipientEmail: to,
+      subject,
+      type: 'quote_ack',
+      status: error ? 'failed' : 'sent',
+      externalId: data?.id,
+      errorMessage: error?.message,
+      bodyHtml: html,
+    });
+    return { success: !error };
+  } catch (error) {
+    console.error('Error sending plain reply:', error);
+    return { success: false };
   }
 }

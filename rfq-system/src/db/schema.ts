@@ -139,6 +139,27 @@ export const rfqInvitations = pgTable('rfq_invitations', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Quote Drafts — the in-progress quotation for one invitation, before submit.
+// One row per invitation, upserted. Exists so a supplier who responds by email
+// (or leaves the link half-done) reopens the link with everything already
+// filled. Deleted when the quote is submitted. See REQUIREMENT_quote-via-email.
+export const quoteDrafts = pgTable('quote_drafts', {
+  rfqInvitationId: text('rfq_invitation_id')
+    .primaryKey()
+    .references(() => rfqInvitations.id, { onDelete: 'cascade' }),
+  // { [rfqLineItemId]: LineItemResponse } — the fixed per-line grid state.
+  lineResponses: jsonb('line_responses').notNull().default({}),
+  // buyer-defined quote-level + questionnaire field values, keyed by field id.
+  formData: jsonb('form_data').notNull().default({}),
+  notes: text('notes'),
+  // target id -> { extractionConfidence, rationale, confirmedBySupplier, isDefault }
+  provenance: jsonb('provenance').notNull().default({}),
+  // how the latest write happened: 'email' (inbound webhook) or 'link' (the page)
+  source: text('source', { enum: ['email', 'link'] }).notNull().default('link'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
 // Quote Submissions
 export const quoteSubmissions = pgTable('quote_submissions', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -208,13 +229,18 @@ export const emailLogs = pgTable('email_logs', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   recipientEmail: text('recipient_email').notNull(),
   subject: text('subject').notNull(),
-  type: text('type', { enum: ['rfq_invitation', 'reminder', 'purchase_order'] }).notNull(),
+  type: text('type', { enum: ['rfq_invitation', 'reminder', 'purchase_order', 'quote_ack'] }).notNull(),
   rfqId: text('rfq_id').references(() => rfqs.id),
   rfqInvitationId: text('rfq_invitation_id').references(() => rfqInvitations.id),
   purchaseOrderId: text('purchase_order_id').references(() => purchaseOrders.id),
   status: text('status', { enum: ['sent', 'delivered', 'failed', 'bounced'] }).notNull(),
   externalId: text('external_id'),  // Resend email ID
   errorMessage: text('error_message'),
+  // Rendered HTML body + attachment metadata, kept so the in-app Supplier
+  // Mailbox simulator can display and reply to outbound mail without a real
+  // inbox. POC-only convenience — see /dashboard/mailbox.
+  bodyHtml: text('body_html'),
+  attachments: jsonb('attachments'),  // [{ filename, bytes }]
   sentAt: timestamp('sent_at').notNull().defaultNow(),
 });
 
@@ -245,6 +271,9 @@ export type NewRFQInvitation = typeof rfqInvitations.$inferInsert;
 
 export type QuoteSubmission = typeof quoteSubmissions.$inferSelect;
 export type NewQuoteSubmission = typeof quoteSubmissions.$inferInsert;
+
+export type QuoteDraft = typeof quoteDrafts.$inferSelect;
+export type NewQuoteDraft = typeof quoteDrafts.$inferInsert;
 
 export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
 export type NewPurchaseOrder = typeof purchaseOrders.$inferInsert;

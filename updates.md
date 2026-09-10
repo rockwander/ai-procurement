@@ -81,6 +81,61 @@ comparison columns.
 **Status:** implemented (verified in browser: clicking a T&C clause → chat
 scoped → agent recorded the Net 30 exception → shown inline + in the panel).
 
+## 2026-09-09 — Accept quotations via email
+**Refinement:** A supplier can respond to an RFQ **by replying to the invitation
+email** — free-text body plus attachments (quote PDF, price list, spec sheet,
+any readable format) — without opening the link. The system runs the reply
+through the **same Autofill Agent** as the `/quote/[token]` page, fills the
+fixed per-line table + quote-level fields + questionnaire, and **emails the
+supplier back** with:
+
+- the **RFQ link** (preview + AI assistant), always;
+- **low-confidence / assumed values** (the amber ones) listed with their
+  rationale, for the supplier to verify;
+- **blockers** (mandatory fields still missing), grouped as the "needs
+  attention" panel groups them.
+
+**Submission decision:** the emailed quotation is **auto-submitted only when
+there are no blockers AND no *uncertain* amber fields** (AI extractions at
+medium/low confidence). A bare system default (currency = the RFQ's, UoM = the
+asked unit) is amber but does **not** block — it's the safe value and appears
+in the ack email for awareness (product-owner decision, 2026-09-10). Any
+blocker *or* any uncertain value → **not submitted**, parked as a draft on
+`/quote/[token]`: with a blocker, "your quotation has NOT been submitted, open
+the link and submit"; with only low-confidence values, "ready but not yet
+submitted, verify the highlighted fields and press Submit".
+
+Auto-submit is blocked on uncertain values because one-shot submission locks
+the preview — a low-confidence value the supplier never saw would be frozen in.
+
+Inbound transport is a **Resend inbound webhook**; the email is matched to the
+invitation by a **token marker in the subject line** (preserved on reply)
+cross-checked against the **sender address matching the supplier's contact
+email**. No token, or a sender mismatch, or an already-submitted invitation →
+the reply tells them to use the link; the email is not processed. An
+email-submitted quotation is identical downstream to a link-submitted one.
+
+Requires a small server-side **draft** for the in-progress quote (today the
+link flow keeps it only in React state) so the link opens with the emailed
+data already filled.
+
+**Affects:** §3 Supplier Flow (adds email as an alternative entry path); §5
+Platform (adds inbound email); Autofill Agent (same agent, new caller);
+invitation + reminder email subject (token marker); `email.ts` (new
+`quote_ack` email); new `quote_drafts` table + `GET/PATCH /api/quote/[token]`
+draft handling; new `POST /api/quote/inbound` webhook.
+
+**Out of scope:** `.xlsx` attachments (named as unreadable in the reply); fuzzy
+sender→invitation matching; buyer-facing "how did this quote arrive" beyond
+what `quote_submissions` shows; FX conversion (unchanged).
+
+**Full requirement:** `rfq-system/REQUIREMENT_quote-via-email.md`.
+
+**Status:** implemented (verified in browser: email reply with price only →
+draft-blocked; with all fields + USD → auto-submitted; already-submitted →
+rejected). Includes an in-app Supplier Mailbox simulator (`/dashboard/mailbox`)
+for testing without a mail domain.
+
 ## 2026-09-09 — Supplier responds via a document preview, not a form
 **Refinement:** The supplier side of an RFQ is a **chat + live document
 preview**, not a form to fill. The supplier talks to the Autofill Agent and/or

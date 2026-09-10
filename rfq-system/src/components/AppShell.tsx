@@ -64,6 +64,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link href="/dashboard/orders" className="text-gray-600 hover:text-gray-900">
                 Purchase Orders
               </Link>
+              <Link href="/dashboard/mailbox" className="text-gray-600 hover:text-gray-900">
+                Supplier Mailbox
+              </Link>
               <Link href="/dashboard/sample-docs" className="text-gray-600 hover:text-gray-900">
                 Sample Docs
               </Link>

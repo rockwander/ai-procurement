@@ -16,7 +16,7 @@ refinements are logged there — not bug fixes, infra, or deploy work.
 | Actor | Auth | Description |
 |-------|------|-------------|
 | **Buyer** (procurement) | Email + password → JWT cookie | Creates and runs RFQs from the dashboard. |
-| **Supplier** | None — unique tokenized link only | Fills in one quote form per invitation. No account. |
+| **Supplier** | None — unique tokenized link only | Submits one quotation per invitation, via the link (chat + preview) or by replying to the invitation email. No account. |
 
 Seeded buyer: `admin@procurement.ai` / `admin123`.
 
@@ -140,7 +140,10 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
 3. **Select suppliers & send**
    - Buyer multi-selects suppliers (with a select-all for the current filter).
    - System creates tokenized invitations, renders the RFQ PDF, and emails
-     each supplier a summary + PDF + unique form link.
+     each supplier a summary + PDF + unique form link. The subject carries a
+     machine-readable token marker (`[ref: <rfqId> / <token>]`) so a plain
+     email reply can be matched back to the invitation (see §3 — Responding
+     by email).
    - Per non-responding supplier: manual "send reminder".
 
 4. **Quote comparison**
@@ -192,9 +195,42 @@ Seeded buyer: `admin@procurement.ai` / `admin123`.
   separate structured provenance, pinned to the field, never merged into notes.
 - One-shot submission; the preview locks after submit.
 
-See `REQUIREMENT_supplier-doc-preview.md` for the full requirement. This
-replaces the earlier "fill the form" supplier interaction; the buyer-side RFQ
-form builder is unaffected by this change.
+### Responding by email (alternative entry path)
+
+A supplier can also respond **by replying to the invitation email** — free-text
+body + attachments (any readable format) — without opening the link:
+
+- Inbound via a **Resend inbound webhook** → `POST /api/quote/inbound`. The
+  email is matched to the invitation by a **token marker in the subject line**
+  (`[ref: <rfqId> / <token>]`, preserved on reply) **and** the sender address
+  matching the supplier's `contact_email`. No token / sender mismatch /
+  already-submitted → an auto-reply points them to the link; nothing is
+  processed.
+- Body text + parsed attachments feed the **same Autofill Agent**; patches
+  merge into a server-side **draft** (`quote_drafts`, keyed by invitation) so
+  the link opens with the emailed data already filled. The email body becomes
+  the first turn of the `/quote/[token]` chat thread.
+- **Auto-submitted only when there are no blockers AND no *uncertain* amber
+  fields** (AI extractions at medium/low confidence). A bare system default
+  (currency = the RFQ's, UoM = the asked unit) is `assumed`/amber but does
+  **not** block — it's the safe value and is listed in the ack email for
+  awareness. Any blocker *or* any uncertain field → **not submitted**, draft
+  parked on the link.
+- The system **emails the supplier back** (`email_logs.type` = `quote_ack`)
+  with: the RFQ link (always); the blockers, grouped as the "needs attention"
+  panel; the amber values with their rationale to verify. The headline states
+  plainly whether the quotation is submitted, not submitted (blockers), or
+  ready-but-not-submitted (amber only).
+
+An email-submitted quotation is identical downstream to a link-submitted one
+(same `quote_submissions` row, same comparison and evaluation).
+
+- A POC **Supplier Mailbox** (`/dashboard/mailbox`) lists every outbound email
+  and lets the buyer reply "as the supplier" through the same processor the
+  webhook uses — so the flow is testable without a verified mail domain.
+
+See `REQUIREMENT_supplier-doc-preview.md` and `REQUIREMENT_quote-via-email.md`
+for the full requirements.
 
 ---
 
@@ -220,10 +256,12 @@ model no longer available to the key) rolls straight to the next model.
 
 ## 5. Platform
 
-- **DB**: Neon serverless Postgres (`drizzle-orm/neon-http`). 13 tables
-  (adds `rfq_draft_messages`, `rfq_document_versions`).
-- **Email**: Resend (test mode delivers only to the account owner until a
-  domain is verified).
+- **DB**: Neon serverless Postgres (`drizzle-orm/neon-http`). 14 tables
+  (adds `rfq_draft_messages`, `rfq_document_versions`, `quote_drafts`).
+- **Email**: Resend — outbound (invitation / reminder / PO / quote-ack) and
+  **inbound** (supplier email replies → `POST /api/quote/inbound` webhook,
+  signature-verified with `RESEND_INBOUND_SECRET`). Test mode delivers
+  outbound only to the account owner until a domain is verified.
 - **PDF**: `@react-pdf/renderer` — RFQ document, Purchase Order document.
 - **Hosting**: Vercel. Root directory `rfq-system`, Next.js auto-detected.
 - **Auth**: JWT in an httpOnly cookie.
@@ -296,6 +334,69 @@ out); `/quote/[token]` GET (returns RFQ terms) + POST (`exceptions`);
 `quote_submissions` schema; comparison columns.
 
 **Status:** implemented (browser-verified).
+
+### 2026-09-09 — Accept quotations via email
+
+**Refinement:** A supplier can respond to an RFQ **by replying to the
+invitation email** — free-text body + attachments (any readable format) —
+without opening the link. The reply runs through the **same Autofill Agent**
+as `/quote/[token]`; the system fills the fixed per-line table + quote-level
+fields + questionnaire and **emails the supplier back**.
+
+The response email always carries the **RFQ link** (preview + AI assistant),
+lists **low-confidence / assumed (amber) values** with their rationale to
+verify, and lists **blockers** (mandatory fields still missing) grouped as the
+"needs attention" panel.
+
+**Submission decision:** auto-submitted **only when there are no blockers AND
+no *uncertain* amber fields** (AI extractions at medium/low confidence). A bare
+system default (currency = the RFQ's, UoM = the asked unit) is amber but does
+not block — it's the safe value, shown in the ack email for awareness
+(product-owner decision, 2026-09-10). Any blocker *or* any uncertain value →
+**not submitted**, parked as a draft; the reply states this plainly ("NOT
+been submitted — open the link and submit" / "ready but not yet submitted —
+verify the highlighted fields"). One-shot submission locks the preview, so a
+low-confidence value the supplier never saw must not be frozen in.
+
+**Transport / matching:** Resend **inbound webhook** → `POST
+/api/quote/inbound`; matched by a **token marker in the subject line**
+(`[ref: <rfqId> / <token>]`, preserved on reply) **and** the sender address
+matching the supplier's `contact_email`. No token / mismatch / already-
+submitted → auto-reply points to the link, nothing processed.
+
+Requires a server-side **draft** (`quote_drafts`, keyed by invitation) — today
+the link flow keeps the in-progress quote only in React state. An
+email-submitted quotation is identical downstream to a link-submitted one.
+
+**Affects:** §2 step 3 (invitation subject token marker); §3 Supplier Flow
+(email as an alternative entry path); §4 AI Agents (Autofill — new caller,
+unchanged contract); §5 Platform (inbound email; `quote_drafts` table;
+`email_logs` gains `body_html` + `attachments`); `email.ts` (`quote_ack`
+email; subject marker on invitation + reminder); `quote-access.ts`; `GET`/new
+`PATCH` `/api/quote/[token]` draft; new `POST /api/quote/inbound`; new
+`lib/inbound-email.ts`, `lib/quote-ack.ts`, `lib/quote-inbound.ts`,
+`lib/quote-draft.ts`.
+
+**Design decisions (product owner):**
+- Auto-submit requires no blockers **and** no *uncertain* amber fields; a bare
+  system default (currency/UoM) does not block (2026-09-10).
+- Matching is subject-token **plus** sender-address; no fuzzy fallback.
+- Inbound via Resend (one vendor for in + out).
+- The email body becomes the first turn of the `/quote/[token]` chat thread.
+
+**POC:** real inbound email needs a verified domain + MX; for the POC an
+in-app **Supplier Mailbox** (`/dashboard/mailbox`) lists every outbound email
+and lets the buyer reply "as the supplier" through the same shared processor
+(`processInboundEmail`) the webhook uses.
+
+**Out of scope:** `.xlsx` attachments (named as unreadable in the reply);
+fuzzy sender→invitation matching; buyer-facing "how did this quote arrive";
+FX conversion (unchanged).
+
+**Full requirement:** `REQUIREMENT_quote-via-email.md`.
+
+**Status:** implemented (browser-verified: price-only → draft-blocked;
+complete + USD → auto-submitted; already-submitted → rejected).
 
 ### 2026-09-09 — Supplier responds via a document preview, not a form
 
