@@ -13,17 +13,19 @@ import { eq, and, asc } from 'drizzle-orm';
 import { getAuthUser, unauthorized, notFound, badRequest, serverError } from '@/lib/api';
 import { normalizeRFQDocument } from '@/lib/rfq-document';
 import type { RFQLineForResponse } from '@/lib/line-response';
-import { draftFromSubmission, groupComments } from '@/lib/quote-negotiation';
-import { sendQuoteNegotiationEmail } from '@/lib/email';
+import { draftFromSubmission, orderComments } from '@/lib/quote-negotiation';
+import { sendQuoteNegotiationEmail, type QuoteCommentItem } from '@/lib/email';
+import { QuoteCommentAgent } from '@/lib/agents/quote-comment';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+export const maxDuration = 45;
 
 /**
- * Send the current round of comments to the supplier as a review or
- * negotiation request. Flips the invitation to 'negotiating', seeds an
- * editable draft from the submitted quote, and emails the supplier.
- * See REQUIREMENT_quote-negotiation.md.
+ * Send the current round of comments to the supplier. An AI pass classifies
+ * each comment as a clarification (review) or a terms-change request
+ * (negotiation) and drafts the outbound copy; the round is stamped, the
+ * invitation flips to 'negotiating', an editable draft is seeded from the
+ * submission, and the supplier is emailed. See REQUIREMENT_quote-negotiation.md.
  */
 export async function POST(
   request: NextRequest,
@@ -33,11 +35,6 @@ export async function POST(
     const user = await getAuthUser(request);
     if (!user) return unauthorized();
     const { id, invitationId } = await params;
-
-    const body = await request.json();
-    const intent = (body?.intent === 'negotiation' ? 'negotiation' : 'review') as
-      | 'review'
-      | 'negotiation';
 
     const [row] = await db
       .select({ invitation: rfqInvitations, supplier: suppliers, rfq: rfqs })
@@ -75,24 +72,6 @@ export async function POST(
     const round = openComments[0].round;
     const now = new Date();
 
-    // Stamp the round's comments as sent.
-    await db
-      .update(quoteComments)
-      .set({ status: 'sent', intent, sentAt: now })
-      .where(
-        and(
-          eq(quoteComments.rfqInvitationId, invitationId),
-          eq(quoteComments.status, 'open')
-        )
-      );
-
-    // Flip the invitation so the supplier link reopens editable.
-    await db
-      .update(rfqInvitations)
-      .set({ status: 'negotiating' })
-      .where(eq(rfqInvitations.id, invitationId));
-
-    // Seed the editable draft from the submitted quote.
     const lineItems = await db
       .select()
       .from(rfqLineItems)
@@ -113,6 +92,52 @@ export async function POST(
       : null;
     const rfqCurrency = rfqDoc?.header.currency || 'INR';
 
+    // ---- AI: classify each comment + draft the copy ------------------------
+    const agent = new QuoteCommentAgent();
+    const cls = await agent.classifyAndDraft(
+      {
+        rfqTitle: row.rfq.title,
+        supplierName: row.supplier.companyName,
+        buyerName: user.name || 'the buyer',
+        comments: openComments.map((c) => ({
+          id: c.id,
+          fieldLabel: c.fieldLabel,
+          quotedValue: c.quotedValue,
+          comment: c.comment,
+        })),
+      },
+      id
+    );
+
+    const classificationFailed = !cls.success || !cls.data;
+    const intentById = new Map<string, 'review' | 'negotiation'>();
+    if (cls.success && cls.data) {
+      for (const c of cls.data.classified) intentById.set(c.id, c.intent);
+    }
+    // Fallback: everything is a review item.
+    for (const c of openComments) {
+      if (!intentById.has(c.id)) intentById.set(c.id, 'review');
+    }
+
+    const hasNeg = [...intentById.values()].includes('negotiation');
+    const hasRev = [...intentById.values()].includes('review');
+    const roundKind: 'review' | 'negotiation' | 'both' =
+      hasNeg && hasRev ? 'both' : hasNeg ? 'negotiation' : 'review';
+
+    // ---- Persist: stamp each comment with its own intent ------------------
+    for (const c of openComments) {
+      await db
+        .update(quoteComments)
+        .set({ status: 'sent', intent: intentById.get(c.id)!, sentAt: now })
+        .where(eq(quoteComments.id, c.id));
+    }
+
+    await db
+      .update(rfqInvitations)
+      .set({ status: 'negotiating' })
+      .where(eq(rfqInvitations.id, invitationId));
+
+    // ---- Seed the editable draft from the submitted quote ----------------
     const draft = draftFromSubmission(
       lines,
       {
@@ -146,21 +171,44 @@ export async function POST(
         },
       });
 
-    // Email the supplier.
+    // ---- Email the supplier ---------------------------------------------
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
-    const lineLabels: Record<string, string> = {};
+    const lineOrder = lineItems.map((li) => li.id);
+    const lineLabel: Record<string, string> = {};
     lineItems.forEach((li, i) => {
-      lineLabels[li.id] = `Line ${i + 1} — ${li.itemDescription}`;
+      lineLabel[li.id] = `Line ${i + 1} — ${li.itemDescription}`;
     });
-    const groups = groupComments(
+    const prettyLabel = (fieldId: string, fallback: string): string => {
+      const m = /^line:([^:]+):/.exec(fieldId) || /^line:([^:]+)$/.exec(fieldId);
+      if (m && lineLabel[m[1]]) {
+        // keep the field part after the em-dash if the stored label has one
+        const tail = fallback.replace(/^Line\s+\d+\s+—\s+/, '');
+        return `${lineLabel[m[1]]} · ${tail}`;
+      }
+      return fallback;
+    };
+
+    const ordered = orderComments(
       openComments.map((c) => ({
         fieldId: c.fieldId,
-        fieldLabel: c.fieldLabel,
+        fieldLabel: prettyLabel(c.fieldId, c.fieldLabel),
         quotedValue: c.quotedValue,
         comment: c.comment,
+        _id: c.id,
       })),
-      lineLabels
+      lineOrder
     );
+
+    const reviewItems: QuoteCommentItem[] = [];
+    const negotiationItems: QuoteCommentItem[] = [];
+    for (const o of ordered) {
+      const item: QuoteCommentItem = {
+        label: o.label,
+        quotedValue: o.quotedValue,
+        comment: o.comment,
+      };
+      (intentById.get(o._id) === 'negotiation' ? negotiationItems : reviewItems).push(item);
+    }
 
     const emailRes = await sendQuoteNegotiationEmail(
       {
@@ -170,18 +218,35 @@ export async function POST(
         rfqId: row.rfq.id,
         token: row.invitation.token,
         formLink: `${appUrl}/quote/${row.invitation.token}`,
-        intent,
         round,
-        groups,
+        roundKind,
+        subject:
+          cls.data?.email.subject ?? `Your quotation for ${row.rfq.title}`,
+        headline:
+          cls.data?.email.headline ??
+          (roundKind === 'negotiation'
+            ? 'We would like to revise a few points'
+            : roundKind === 'both'
+            ? 'A few clarifications and points to discuss'
+            : 'A few points need your attention'),
+        intro:
+          cls.data?.email.intro ??
+          'We have reviewed your quotation and need you to address the points below. Please open your quotation at the link, make any changes, and resubmit.',
+        reviewItems,
+        negotiationItems,
+        classificationFailed,
       },
       invitationId
     );
 
     return NextResponse.json({
       ok: true,
-      intent,
       round,
+      roundKind,
       sent: openComments.length,
+      review: reviewItems.length,
+      negotiation: negotiationItems.length,
+      classificationFailed,
       emailSent: emailRes.success,
       emailError: emailRes.success ? undefined : emailRes.error,
     });

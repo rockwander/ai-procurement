@@ -91,9 +91,9 @@ export async function GET(
             }
           : null,
       // The buyer sent the submitted quote back with comments to address.
+      // Comments carry their own AI-assigned intent (review / negotiation).
       negotiation: negotiating
         ? {
-            intent: roundComments[0]?.intent ?? 'review',
             round: latestRound,
             comments: roundComments.map((c) => ({
               fieldId: c.fieldId,

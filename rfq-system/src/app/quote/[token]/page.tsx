@@ -42,7 +42,6 @@ interface QuoteData {
   submitted: boolean;
   submission: { formData: any; lineItems: any[]; exceptions?: QuoteException[] } | null;
   negotiation: {
-    intent: 'review' | 'negotiation';
     round: number;
     comments: Array<{
       fieldId: string;
@@ -329,21 +328,17 @@ export default function SupplierQuotePage() {
             </div>
           ) : (
             <>
-              {negotiation && (
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 text-sm text-purple-900">
-                  <p className="font-semibold mb-1">
-                    {negotiation.intent === 'negotiation'
-                      ? 'The buyer would like to revise a few points'
-                      : 'The buyer has asked for some clarifications'}
-                  </p>
-                  <p className="mb-2">
-                    Their notes are pinned to the relevant values below
-                    (<span className="rounded bg-purple-100 px-1">💬 buyer</span>).
-                    Make any changes and resubmit — your quotation is{' '}
-                    <strong>not locked</strong> right now.
-                  </p>
+              {negotiation && (() => {
+                const rev = negotiation.comments.filter((c) => c.intent !== 'negotiation');
+                const neg = negotiation.comments.filter((c) => c.intent === 'negotiation');
+                const both = rev.length > 0 && neg.length > 0;
+                const List = ({
+                  items,
+                }: {
+                  items: typeof negotiation.comments;
+                }) => (
                   <ul className="list-disc pl-5 space-y-0.5">
-                    {negotiation.comments.map((c, i) => (
+                    {items.map((c, i) => (
                       <li key={i}>
                         <span className="font-medium">{c.fieldLabel}</span>
                         {c.quotedValue != null && (
@@ -354,8 +349,41 @@ export default function SupplierQuotePage() {
                       </li>
                     ))}
                   </ul>
-                </div>
-              )}
+                );
+                return (
+                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 text-sm text-purple-900">
+                    <p className="font-semibold mb-1">
+                      {both
+                        ? 'The buyer has clarifications and points to discuss'
+                        : neg.length > 0
+                        ? 'The buyer would like to revise a few points'
+                        : 'The buyer has asked for some clarifications'}
+                    </p>
+                    <p className="mb-2">
+                      Their notes are pinned to the relevant values below
+                      (<span className="rounded bg-purple-100 px-1">💬 buyer</span>).
+                      Make any changes and resubmit — your quotation is{' '}
+                      <strong>not locked</strong> right now.
+                    </p>
+                    {rev.length > 0 && (
+                      <div className="mb-2">
+                        {both && (
+                          <p className="font-medium text-purple-800">Clarifications needed</p>
+                        )}
+                        <List items={rev} />
+                      </div>
+                    )}
+                    {neg.length > 0 && (
+                      <div>
+                        {both && (
+                          <p className="font-medium text-purple-800">Points to negotiate</p>
+                        )}
+                        <List items={neg} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {fromEmail && (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
                   We filled this in from your email reply. Check the highlighted

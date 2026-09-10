@@ -2,7 +2,6 @@
 // back into an editable draft, and group the buyer's comments for the email
 // and the supplier's view. See REQUIREMENT_quote-negotiation.md.
 
-import type { QuoteComment } from '@/db/schema';
 import {
   normaliseLineResponse,
   type LineItemResponse,
@@ -10,7 +9,7 @@ import {
 } from '@/lib/line-response';
 import type { DraftState } from '@/lib/quote-draft';
 import { parseLineFieldId } from '@/lib/line-response-status';
-import type { QuoteCommentGroup } from '@/lib/email';
+import type { QuoteCommentItem } from '@/lib/email';
 
 /**
  * Seed an editable draft from a submitted quote so the supplier's link reopens
@@ -50,41 +49,35 @@ export function draftFromSubmission(
 }
 
 /**
- * Group comments by line item / section for the email and the supplier's
- * summary. `lineLabels` maps a line-item id to a display label
- * ("Line 3 — Corrugated box").
+ * Order comments line-first (line items in RFQ order, then commercial /
+ * questionnaire, then whole-quote) and shape them for the email. Sectioning
+ * into review vs negotiation is done by the caller from the AI's per-comment
+ * classification, not here.
  */
-export function groupComments(
-  comments: Pick<QuoteComment, 'fieldId' | 'fieldLabel' | 'quotedValue' | 'comment'>[],
-  lineLabels: Record<string, string>
-): QuoteCommentGroup[] {
-  const order: string[] = [];
-  const byHeading = new Map<string, QuoteCommentGroup>();
-
-  for (const c of comments) {
-    const parsed = parseLineFieldId(c.fieldId);
+export function orderComments<
+  C extends { fieldId: string; fieldLabel: string; quotedValue: string | null; comment: string }
+>(comments: C[], lineOrder: string[]): (C & QuoteCommentItem)[] {
+  const rank = (fieldId: string): number => {
+    const parsed = parseLineFieldId(fieldId);
     const lineId = parsed
       ? parsed.itemId
-      : c.fieldId.startsWith('line:')
-      ? c.fieldId.slice('line:'.length)
+      : fieldId.startsWith('line:')
+      ? fieldId.slice('line:'.length)
       : null;
-
-    const heading = lineId
-      ? lineLabels[lineId] ?? 'Line item'
-      : c.fieldId === '__quote'
-      ? 'Overall'
-      : 'Commercial terms & questionnaire';
-
-    if (!byHeading.has(heading)) {
-      byHeading.set(heading, { heading, items: [] });
-      order.push(heading);
+    if (lineId) {
+      const i = lineOrder.indexOf(lineId);
+      return i === -1 ? 500 : i;
     }
-    byHeading.get(heading)!.items.push({
+    if (fieldId === '__quote') return 2000;
+    return 1000; // commercial / questionnaire
+  };
+
+  return [...comments]
+    .sort((a, b) => rank(a.fieldId) - rank(b.fieldId))
+    .map((c) => ({
+      ...c,
       label: c.fieldLabel,
       quotedValue: c.quotedValue,
       comment: c.comment,
-    });
-  }
-
-  return order.map((h) => byHeading.get(h)!);
+    }));
 }

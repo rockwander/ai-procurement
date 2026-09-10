@@ -24,16 +24,17 @@ Entry format:
 ## 2026-09-11 — Review / negotiate a submitted quotation
 **Refinement:** From Compare quotes, the buyer expands a supplier to view their
 full submitted quotation on a dedicated page, clicks any response value to
-attach a comment, collects several, and sends them with **Send for Review** or
-**Send for Negotiation**. Both email the supplier and reopen their quotation
-for editing; on resubmit it locks again (invitation status `negotiating` →
-`submitted`, `quote_submissions` row overwritten with a `revision` counter).
-Review vs Negotiation: same mechanics, different copy + recorded `intent`
-(review = clarify/complete; negotiation = revise terms). POC scope: supplier
-edits everything on resubmit, no threaded replies, no version history, award
-never blocked.
-**Affects:** MASTER_SPEC §3 (Supplier Flow), §5 (Platform), Compare/Award step.
-New `REQUIREMENT_quote-negotiation.md`.
+attach a comment, collects several, and hits **one "Send to supplier" button**.
+The AI classifies each comment as a clarification (review) or a terms-change
+request (negotiation) and drafts the supplier's message, adapting to
+review-only / negotiation-only / both — the buyer doesn't choose, no override.
+Fallback on AI failure: all comments sent as review + generic copy. The email
+reopens the supplier's quotation for editing; on resubmit it locks again
+(invitation status `negotiating` → `submitted`, `quote_submissions` row
+overwritten with a `revision` counter). POC scope: supplier edits everything on
+resubmit, no threaded replies, no version history, award never blocked.
+**Affects:** MASTER_SPEC §3 (Supplier Flow), §4 (AI Agents — new QuoteComment),
+§5 (Platform), Compare/Award step. New `REQUIREMENT_quote-negotiation.md`.
 **Status:** implemented
 
 ## 2026-09-10 — A partial quotation means "not offered" on the other lines

@@ -110,14 +110,29 @@ export default function QuoteDetailPage() {
     }
   }
 
-  async function send(intent: 'review' | 'negotiation') {
+  const [sendResult, setSendResult] = useState<{
+    roundKind: 'review' | 'negotiation' | 'both';
+    review: number;
+    negotiation: number;
+    classificationFailed: boolean;
+    emailSent: boolean;
+  } | null>(null);
+
+  async function send() {
     setSending(true);
     setError('');
     try {
-      await api(`/api/rfqs/${id}/quotes/${invitationId}/send`, {
+      const res = await api<{
+        roundKind: 'review' | 'negotiation' | 'both';
+        review: number;
+        negotiation: number;
+        classificationFailed: boolean;
+        emailSent: boolean;
+      }>(`/api/rfqs/${id}/quotes/${invitationId}/send`, {
         method: 'POST',
-        body: JSON.stringify({ intent }),
+        body: JSON.stringify({}),
       });
+      setSendResult(res);
       load();
     } catch (e: any) {
       setError(e.message);
@@ -176,13 +191,28 @@ export default function QuoteDetailPage() {
         </div>
       )}
 
-      {negotiating && (
+      {sendResult && (
+        <Card className="p-3 mb-4 border-green-200 bg-green-50 text-sm text-green-800">
+          Sent to the supplier
+          {sendResult.emailSent ? '' : ' (email failed — check the mailbox)'}.{' '}
+          {sendResult.classificationFailed ? (
+            <>Couldn&rsquo;t auto-sort the comments — all sent as clarifications.</>
+          ) : (
+            <>
+              {sendResult.review > 0 && `${sendResult.review} clarification${sendResult.review > 1 ? 's' : ''}`}
+              {sendResult.review > 0 && sendResult.negotiation > 0 && ' · '}
+              {sendResult.negotiation > 0 &&
+                `${sendResult.negotiation} negotiation point${sendResult.negotiation > 1 ? 's' : ''}`}
+              .
+            </>
+          )}
+        </Card>
+      )}
+
+      {negotiating && !sendResult && (
         <Card className="p-3 mb-4 border-purple-200 bg-purple-50 text-sm text-purple-800">
-          Sent back to the supplier for{' '}
-          {data.comments.find((c) => c.status === 'sent')?.intent === 'negotiation'
-            ? 'negotiation'
-            : 'review'}
-          . Waiting for a revised quotation. New comments will go in the next round.
+          Sent back to the supplier. Waiting for a revised quotation. New
+          comments will go in the next round.
         </Card>
       )}
 
@@ -251,7 +281,8 @@ export default function QuoteDetailPage() {
             {openComments.length === 0 ? (
               <p className="text-sm text-gray-400">
                 Click any value in the quotation to comment on it. Add all your
-                points, then send for review or negotiation.
+                points — the assistant sorts each into a clarification or a
+                negotiation point and writes the supplier&rsquo;s message.
               </p>
             ) : (
               <ul className="space-y-3">
@@ -268,51 +299,55 @@ export default function QuoteDetailPage() {
 
             {openComments.length > 0 && (
               <div className="mt-4 border-t border-gray-200 pt-3 space-y-2">
-                <Button
-                  className="w-full"
-                  onClick={() => send('review')}
-                  disabled={sending}
-                >
-                  {sending ? 'Sending…' : 'Send for Review'}
-                </Button>
-                <Button
-                  className="w-full"
-                  variant="secondary"
-                  onClick={() => send('negotiation')}
-                  disabled={sending}
-                >
-                  {sending ? 'Sending…' : 'Send for Negotiation'}
+                <Button className="w-full" onClick={send} disabled={sending}>
+                  {sending ? 'Sending…' : 'Send to supplier'}
                 </Button>
                 <p className="text-[11px] text-gray-400">
-                  Both email the supplier with these comments and reopen their
-                  quotation for editing. The wording differs: “review” asks for
-                  clarification/completion, “negotiation” asks to revise terms.
+                  Emails the supplier and reopens their quotation for editing.
+                  The assistant tags each comment as a clarification or a
+                  negotiation point and adapts the message to match.
                 </p>
               </div>
             )}
           </Card>
 
-          {sentRounds.map(([round, cs]) => (
-            <Card key={round} className="p-4">
-              <p className="text-xs font-medium text-gray-500 uppercase mb-2">
-                Round {round} · {cs[0].intent} ·{' '}
-                {cs.every((c) => c.status === 'addressed') ? 'addressed' : 'sent'}
-              </p>
-              <ul className="space-y-2">
-                {cs.map((c) => (
-                  <li key={c.id} className="text-sm">
-                    <span className="font-medium text-gray-800">
-                      {c.fieldLabel}
-                    </span>
-                    {c.quotedValue != null && (
-                      <span className="text-gray-400"> ({c.quotedValue})</span>
-                    )}
-                    <p className="text-gray-600">{c.comment}</p>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          ))}
+          {sentRounds.map(([round, cs]) => {
+            const rev = cs.filter((c) => c.intent === 'review');
+            const neg = cs.filter((c) => c.intent === 'negotiation');
+            const addressed = cs.every((c) => c.status === 'addressed');
+            const CommentLi = (c: ReviewComment) => (
+              <li key={c.id} className="text-sm">
+                <span className="font-medium text-gray-800">{c.fieldLabel}</span>
+                {c.quotedValue != null && (
+                  <span className="text-gray-400"> ({c.quotedValue})</span>
+                )}
+                <p className="text-gray-600">{c.comment}</p>
+              </li>
+            );
+            return (
+              <Card key={round} className="p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase mb-2">
+                  Round {round} · {addressed ? 'addressed' : 'sent'}
+                </p>
+                {rev.length > 0 && (
+                  <>
+                    <p className="text-[11px] font-semibold text-blue-700 mb-1">
+                      Clarifications ({rev.length})
+                    </p>
+                    <ul className="space-y-2 mb-3">{rev.map(CommentLi)}</ul>
+                  </>
+                )}
+                {neg.length > 0 && (
+                  <>
+                    <p className="text-[11px] font-semibold text-purple-700 mb-1">
+                      Negotiation points ({neg.length})
+                    </p>
+                    <ul className="space-y-2">{neg.map(CommentLi)}</ul>
+                  </>
+                )}
+              </Card>
+            );
+          })}
 
           <p className="text-xs text-gray-400">
             <Link

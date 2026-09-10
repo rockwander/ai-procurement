@@ -553,17 +553,13 @@ function escapeHtml(s: string): string {
 // only the copy differs (`intent`). See REQUIREMENT_quote-negotiation.md.
 // ---------------------------------------------------------------------------
 
-export interface QuoteCommentGroup {
-  /** e.g. "Line 3 — Corrugated box" or "Commercial terms" */
-  heading: string;
-  items: Array<{
-    /** field anchor label, e.g. "Unit price" */
-    label: string;
-    /** what the supplier had quoted, if any */
-    quotedValue?: string | null;
-    /** the buyer's note */
-    comment: string;
-  }>;
+export interface QuoteCommentItem {
+  /** field anchor label, e.g. "Line 3 — Unit price" */
+  label: string;
+  /** what the supplier had quoted, if any */
+  quotedValue?: string | null;
+  /** the buyer's note */
+  comment: string;
 }
 
 export interface SendQuoteNegotiationParams {
@@ -573,9 +569,32 @@ export interface SendQuoteNegotiationParams {
   rfqId: string;
   token: string;
   formLink: string;
-  intent: 'review' | 'negotiation';
   round: number;
-  groups: QuoteCommentGroup[];
+  /** what this round contains, after AI classification */
+  roundKind: 'review' | 'negotiation' | 'both';
+  /** AI-drafted copy (or a caller fallback) */
+  subject: string;
+  headline: string;
+  intro: string;
+  /** clarification / completion items */
+  reviewItems: QuoteCommentItem[];
+  /** commercial-term change requests */
+  negotiationItems: QuoteCommentItem[];
+  /** true when AI classification failed and everything defaulted to review */
+  classificationFailed?: boolean;
+}
+
+function commentItemsHtml(items: QuoteCommentItem[]): string {
+  return `<ul>${items
+    .map(
+      (it) =>
+        `<li style="margin-bottom:6px;"><strong>${escapeHtml(it.label)}</strong>${
+          it.quotedValue != null && it.quotedValue !== ''
+            ? ` — you quoted <em>${escapeHtml(String(it.quotedValue))}</em>`
+            : ''
+        }<br>${escapeHtml(it.comment)}</li>`
+    )
+    .join('')}</ul>`;
 }
 
 export async function sendQuoteNegotiationEmail(
@@ -583,50 +602,30 @@ export async function sendQuoteNegotiationEmail(
   rfqInvitationId?: string
 ) {
   try {
-    const copy =
-      params.intent === 'negotiation'
-        ? {
-            base: `Let's discuss your quotation — ${params.rfqTitle}`,
-            headerColor: '#7c3aed',
-            headline: 'We would like to revise a few points',
-            intro: `Thank you for your quotation for <strong>${escapeHtml(
-              params.rfqTitle
-            )}</strong>. Before we proceed we would like to revise the points
-              below. Please open your quotation at the link, make any changes you
-              can, and resubmit.`,
-          }
-        : {
-            base: `Clarifications on your quotation — ${params.rfqTitle}`,
-            headerColor: '#2563eb',
-            headline: 'A few points need your attention',
-            intro: `We have reviewed your quotation for <strong>${escapeHtml(
-              params.rfqTitle
-            )}</strong> and need clarification or completion on the points below.
-              Please open your quotation at the link, address them, and resubmit.`,
-          };
+    const headerColor =
+      params.roundKind === 'negotiation'
+        ? '#7c3aed'
+        : params.roundKind === 'both'
+        ? '#6d28d9'
+        : '#2563eb';
 
-    const subject = subjectWithRef(copy.base, params.rfqId, params.token);
+    const subject = subjectWithRef(params.subject, params.rfqId, params.token);
 
-    const groupsHtml = params.groups
-      .map(
-        (g) => `
-          <h3 style="margin:18px 0 6px;">${escapeHtml(g.heading)}</h3>
-          <ul>
-            ${g.items
-              .map(
-                (it) =>
-                  `<li style="margin-bottom:6px;"><strong>${escapeHtml(
-                    it.label
-                  )}</strong>${
-                    it.quotedValue != null && it.quotedValue !== ''
-                      ? ` — you quoted <em>${escapeHtml(String(it.quotedValue))}</em>`
-                      : ''
-                  }<br>${escapeHtml(it.comment)}</li>`
-              )
-              .join('')}
-          </ul>`
-      )
-      .join('');
+    const sections: string[] = [];
+    if (params.reviewItems.length) {
+      sections.push(
+        `<h3 style="margin:18px 0 6px;">Clarifications needed</h3>${commentItemsHtml(
+          params.reviewItems
+        )}`
+      );
+    }
+    if (params.negotiationItems.length) {
+      sections.push(
+        `<h3 style="margin:18px 0 6px;">Points to negotiate</h3>${commentItemsHtml(
+          params.negotiationItems
+        )}`
+      );
+    }
 
     const html = `
       <!DOCTYPE html>
@@ -635,7 +634,7 @@ export async function sendQuoteNegotiationEmail(
         <style>
           body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: ${copy.headerColor}; color: white; padding: 18px; text-align: center; }
+          .header { background: ${headerColor}; color: white; padding: 18px; text-align: center; }
           .content { background: #f9fafb; padding: 28px; }
           .button { display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 5px; margin: 18px 0; }
           ul { padding-left: 20px; }
@@ -643,11 +642,11 @@ export async function sendQuoteNegotiationEmail(
       </head>
       <body>
         <div class="container">
-          <div class="header"><h2 style="margin:0;">${copy.headline}</h2></div>
+          <div class="header"><h2 style="margin:0;">${escapeHtml(params.headline)}</h2></div>
           <div class="content">
             <p>Dear ${escapeHtml(params.supplierName)},</p>
-            <p>${copy.intro}</p>
-            ${groupsHtml}
+            <p>${escapeHtml(params.intro)}</p>
+            ${sections.join('')}
             <p style="text-align:center;">
               <a href="${params.formLink}" class="button">Open &amp; revise your quotation</a>
             </p>
@@ -671,7 +670,12 @@ export async function sendQuoteNegotiationEmail(
     await db.insert(emailLogs).values({
       recipientEmail: params.to,
       subject,
-      type: params.intent === 'negotiation' ? 'quote_negotiation' : 'quote_review',
+      type:
+        params.roundKind === 'negotiation'
+          ? 'quote_negotiation'
+          : params.roundKind === 'both'
+          ? 'quote_negotiation'
+          : 'quote_review',
       rfqId: params.rfqId,
       rfqInvitationId,
       status: error ? 'failed' : 'sent',
@@ -686,7 +690,7 @@ export async function sendQuoteNegotiationEmail(
       return { success: false, error: error.message };
     }
     console.log(
-      `✅ Quote-${params.intent} email sent to ${params.to} (round ${params.round})`
+      `✅ Quote ${params.roundKind} email sent to ${params.to} (round ${params.round})`
     );
     return { success: true, emailId: data?.id };
   } catch (error) {

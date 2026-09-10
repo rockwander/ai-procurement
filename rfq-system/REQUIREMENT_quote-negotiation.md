@@ -14,21 +14,32 @@ adds a controlled way to reopen it.
 
 From the **Compare quotes** page the buyer opens one supplier's full submitted
 quotation, clicks any response value to attach a comment, collects several
-comments, and sends them in one go with one of two buttons — **Send for
-Review** or **Send for Negotiation**. Either emails the supplier and reopens
-their quotation for editing. The supplier edits (anything — no field lock for
-the POC) and resubmits; the quotation locks again.
+comments, and hits **one "Send to supplier" button**. The email reopens the
+supplier's quotation for editing; the supplier edits (anything — no field lock
+for the POC) and resubmits; the quotation locks again.
 
-**Review vs Negotiation** are mechanically identical. They differ only in the
-copy sent to the supplier and in the `intent` recorded per comment:
-- **Review** — "we need clarification or completion" (a missing value, an
-  answer that doesn't match what was asked, information the supplier or the AI
-  skipped).
-- **Negotiation** — "we'd like to revise terms" (price, lead time, payment
-  terms…).
+**AI classification (on send).** The buyer never picks review vs negotiation.
+One Gemini call (`QuoteCommentAgent`) reads all the round's comments together
+and tags each as:
+- **review** — a clarification, a missing value, an answer that doesn't match
+  what the RFQ asked, or information the supplier / the system skipped. No
+  commercial demand.
+- **negotiation** — a request to change a commercial term in the buyer's
+  favour (lower price, shorter lead time, better payment terms, higher
+  committed qty, dropped surcharge…). A comment that does both → negotiation.
 
-No threaded back-and-forth for the POC: the supplier just edits and resubmits.
-Rounds are supported (comment → send → resubmit → comment again → send…).
+The same call drafts the outbound copy, adapting to whether the round is
+review-only, negotiation-only, or **both** (`roundKind`). The supplier's email
+and in-app banner show the comments split into "Clarifications needed" and
+"Points to negotiate".
+
+**Fallback.** If the AI call fails, every comment is tagged `review`, the
+generic review copy is used, the email is still sent, and the buyer sees a
+notice that auto-classification didn't run.
+
+No override, no threaded back-and-forth for the POC: the buyer writes, sends,
+and the supplier edits and resubmits. Rounds are supported (comment → send →
+resubmit → comment again → send…).
 
 ---
 
@@ -44,8 +55,9 @@ Rounds are supported (comment → send → resubmit → comment again → send�
   **`quote_revised`**.
 - New table **`quote_comments`**:
   `id`, `rfq_invitation_id` (cascade), `round` (int), `field_id`, `field_label`,
-  `quoted_value` (snapshot), `comment`, `intent` (`review`|`negotiation`),
-  `status` (`open`|`sent`|`addressed`), `created_by`, `created_at`, `sent_at`.
+  `quoted_value` (snapshot), `comment`, `intent` (`review`|`negotiation` —
+  **set by the AI on send**, `review` while still open), `status`
+  (`open`|`sent`|`addressed`), `created_by`, `created_at`, `sent_at`.
   - `field_id`: `line:<lineItemId>:<field>` (a per-line grid field), a
     buyer-defined form-field id, `line:<lineItemId>` (whole line), or
     `__quote` (overall).
@@ -64,15 +76,19 @@ works).
 2. **Quote-detail page** renders that supplier's submitted quote read-only
    (`QuoteReviewDoc`). Every value is clickable → a comment box in the side
    panel. Comments accumulate as `status: 'open'`, editable / deletable.
-3. **Send for Review** / **Send for Negotiation** — requires ≥1 open comment.
-   `POST /api/rfqs/[id]/quotes/[invitationId]/send { intent }`:
-   - stamps `intent` + `status: 'sent'` + `sent_at` on the round's comments;
+3. **Send to supplier** (one button) — requires ≥1 open comment.
+   `POST /api/rfqs/[id]/quotes/[invitationId]/send` (no body):
+   - `QuoteCommentAgent.classifyAndDraft` tags each comment and drafts the copy
+     (fallback: all `review`);
+   - stamps each comment's own `intent` + `status: 'sent'` + `sent_at`;
    - `invitation.status → 'negotiating'`;
    - seeds a `quote_drafts` row from the submission (`draftFromSubmission`) so
      the supplier's link opens pre-filled and editable;
-   - `sendQuoteNegotiationEmail` — one function, `intent` switches subject /
-     heading / intro. Comments grouped by line / section. Subject carries the
-     `[ref: rfqId / token]` marker.
+   - `sendQuoteNegotiationEmail` — AI-drafted subject / headline / intro, plus
+     two sections ("Clarifications needed", "Points to negotiate"). Subject
+     carries the `[ref: rfqId / token]` marker. `email_logs.type` is
+     `quote_review` for a review-only round, otherwise `quote_negotiation`.
+   - Response: `{ roundKind, review, negotiation, classificationFailed, emailSent }`.
 4. Further comments after a send belong to the **next round**.
 
 Award is never blocked. A supplier stuck in `negotiating` (never resubmitted)
@@ -105,9 +121,22 @@ is simply excluded from evaluation until they return to `submitted`
 
 ## 5. Out of scope (POC)
 
+- Buyer override of the AI classification (fully automatic; no per-comment
+  toggle).
 - Threaded comment replies / supplier accept-counter-decline per comment.
 - Per-field edit locking on resubmit (supplier can edit everything).
 - Submission version history / before-after diff UI.
 - Blocking award while a negotiation is open.
 - Sequential-negotiation ethics controls (comments + rounds are logged, which
   is enough to defend an award later).
+
+---
+
+## 6. AI agent
+
+`QuoteCommentAgent` (`src/lib/agents/quote-comment.ts`) — model
+`gemini-flash-latest` (same chain as the others). Input: the round's raw
+comments (+ field label, supplier's quoted value). Output: `{ classified:
+[{id, intent, reason}], email: {subject, headline, intro} }`. Logged to
+`ai_logs` as `agentType: 'evaluation'`. Non-fatal — a failure falls back to
+all-`review` + generic copy.
